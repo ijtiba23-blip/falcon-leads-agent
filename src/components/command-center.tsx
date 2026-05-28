@@ -662,54 +662,62 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     }
   }
 
-  function handleTemplateSelection(templateId: string, leadId: string, customState?: Partial<typeof outreachForm>) {
-    const template = templates.find((t) => t.id === templateId);
-    if (!template) return;
+  function updateOutreachTemplateFields(templateId: string, leadId: string, customStateOverride?: Partial<typeof outreachForm>) {
+    setOutreachForm((prev) => {
+      const currentState = { ...prev, ...customStateOverride };
+      
+      const template = templates.find((t) => t.id === templateId);
+      if (!template) return currentState;
 
-    let body = template.isHtml ? (template.htmlContent || "") : template.body;
-    let subject = template.subject;
+      let body = template.isHtml ? (template.htmlContent || "") : template.body;
+      let subject = template.subject;
 
-    let name = "there";
-    let companyName = "your company";
-    let jurisdiction = "your area";
+      let name = "there";
+      let companyName = "your company";
+      let jurisdiction = "your area";
 
-    if (leadId === "custom") {
-      const customNameVal = customState ? customState.customName : outreachForm.customName;
-      const customCompanyVal = customState ? customState.customCompany : outreachForm.customCompany;
-      const customJurisdictionVal = customState ? customState.customJurisdiction : outreachForm.customJurisdiction;
-
-      name = customNameVal || "there";
-      companyName = customCompanyVal || "your company";
-      jurisdiction = customJurisdictionVal || "your area";
-    } else {
-      const lead = leads.find((l) => l.id === leadId);
-      if (lead) {
-        name = lead.displayName || "there";
-        companyName = lead.companyName || lead.displayName || "your company";
-        jurisdiction = lead.jurisdiction || "your area";
+      if (leadId === "custom") {
+        name = currentState.customName || "there";
+        companyName = currentState.customCompany || "your company";
+        jurisdiction = currentState.customJurisdiction || "your area";
+      } else {
+        const lead = leads.find((l) => l.id === leadId);
+        if (lead) {
+          name = lead.displayName || "there";
+          companyName = lead.companyName || lead.displayName || "your company";
+          jurisdiction = lead.jurisdiction || "your area";
+        }
       }
-    }
 
-    const offer = selectedCampaign?.offer || "our latest collections";
+      const offerText = selectedCampaign?.offer || "our latest collections";
 
-    body = body
-      .replaceAll("{{name}}", name)
-      .replaceAll("{{companyName}}", companyName)
-      .replaceAll("{{jurisdiction}}", jurisdiction)
-      .replaceAll("{{offer}}", offer);
+      const replaceVars = (text: string) => {
+        if (!text) return "";
+        return text
+          .replaceAll("{{name}}", name)
+          .replaceAll("{{Name}}", name)
+          .replaceAll("{{NAME}}", name)
+          
+          .replaceAll("{{companyName}}", companyName)
+          .replaceAll("{{company}}", companyName)
+          .replaceAll("{{CompanyName}}", companyName)
+          .replaceAll("{{Company}}", companyName)
+          .replaceAll("{{COMPANY}}", companyName)
+          
+          .replaceAll("{{jurisdiction}}", jurisdiction)
+          .replaceAll("{{Jurisdiction}}", jurisdiction)
+          
+          .replaceAll("{{offer}}", offerText)
+          .replaceAll("{{Offer}}", offerText);
+      };
 
-    subject = subject
-      .replaceAll("{{name}}", name)
-      .replaceAll("{{companyName}}", companyName)
-      .replaceAll("{{jurisdiction}}", jurisdiction)
-      .replaceAll("{{offer}}", offer);
-
-    setOutreachForm((prev) => ({
-      ...prev,
-      templateId,
-      subject,
-      body
-    }));
+      return {
+        ...currentState,
+        templateId,
+        subject: replaceVars(subject),
+        body: replaceVars(body)
+      };
+    });
   }
 
 
@@ -1229,12 +1237,10 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                               disabled={!hasEmail}
                               style={{ padding: "0.3rem 0.75rem", fontSize: "0.75rem", background: hasEmail ? "#22c55e" : "rgba(255,255,255,0.06)", cursor: hasEmail ? "pointer" : "not-allowed" }}
                               onClick={() => {
-                                setOutreachForm((prev) => ({
-                                  ...prev,
-                                  leadId: lead.id
-                                }));
                                 if (selectedCampaign?.templateId) {
-                                  handleTemplateSelection(selectedCampaign.templateId, lead.id);
+                                  updateOutreachTemplateFields(selectedCampaign.templateId, lead.id, { leadId: lead.id });
+                                } else {
+                                  setOutreachForm((prev) => ({ ...prev, leadId: lead.id }));
                                 }
                                 setActiveTab("outreach");
                               }}
@@ -1619,9 +1625,10 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       value={outreachForm.leadId}
                       onChange={(event) => {
                         const val = event.target.value;
-                        setOutreachForm((prev) => ({ ...prev, leadId: val }));
                         if (outreachForm.templateId) {
-                          handleTemplateSelection(outreachForm.templateId, val);
+                          updateOutreachTemplateFields(outreachForm.templateId, val, { leadId: val });
+                        } else {
+                          setOutreachForm((prev) => ({ ...prev, leadId: val }));
                         }
                       }}
                     >
@@ -1653,13 +1660,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           value={outreachForm.customEmail}
                           onChange={(e) => {
                             const val = e.target.value;
-                            setOutreachForm(prev => {
-                              const updated = { ...prev, customEmail: val };
-                              if (updated.templateId) {
-                                handleTemplateSelection(updated.templateId, "custom", updated);
-                              }
-                              return updated;
-                            });
+                            setOutreachForm(prev => ({ ...prev, customEmail: val }));
                           }}
                         />
                       </label>
@@ -1672,13 +1673,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           value={outreachForm.customName}
                           onChange={(e) => {
                             const val = e.target.value;
-                            setOutreachForm(prev => {
-                              const updated = { ...prev, customName: val };
-                              if (updated.templateId) {
-                                handleTemplateSelection(updated.templateId, "custom", updated);
-                              }
-                              return updated;
-                            });
+                            if (outreachForm.templateId) {
+                              updateOutreachTemplateFields(outreachForm.templateId, "custom", { customName: val });
+                            } else {
+                              setOutreachForm(prev => ({ ...prev, customName: val }));
+                            }
                           }}
                         />
                       </label>
@@ -1691,13 +1690,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           value={outreachForm.customCompany}
                           onChange={(e) => {
                             const val = e.target.value;
-                            setOutreachForm(prev => {
-                              const updated = { ...prev, customCompany: val };
-                              if (updated.templateId) {
-                                handleTemplateSelection(updated.templateId, "custom", updated);
-                              }
-                              return updated;
-                            });
+                            if (outreachForm.templateId) {
+                              updateOutreachTemplateFields(outreachForm.templateId, "custom", { customCompany: val });
+                            } else {
+                              setOutreachForm(prev => ({ ...prev, customCompany: val }));
+                            }
                           }}
                         />
                       </label>
@@ -1710,13 +1707,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           value={outreachForm.customJurisdiction}
                           onChange={(e) => {
                             const val = e.target.value;
-                            setOutreachForm(prev => {
-                              const updated = { ...prev, customJurisdiction: val };
-                              if (updated.templateId) {
-                                handleTemplateSelection(updated.templateId, "custom", updated);
-                              }
-                              return updated;
-                            });
+                            if (outreachForm.templateId) {
+                              updateOutreachTemplateFields(outreachForm.templateId, "custom", { customJurisdiction: val });
+                            } else {
+                              setOutreachForm(prev => ({ ...prev, customJurisdiction: val }));
+                            }
                           }}
                         />
                       </label>
@@ -1742,7 +1737,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       value={outreachForm.templateId}
                       onChange={(event) => {
                         const val = event.target.value;
-                        handleTemplateSelection(val, outreachForm.leadId);
+                        updateOutreachTemplateFields(val, outreachForm.leadId);
                       }}
                     >
                       <option value="">Select template...</option>
