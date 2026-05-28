@@ -120,7 +120,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     connectionId: "",
     templateId: "",
     subject: "",
-    body: ""
+    body: "",
+    customEmail: "",
+    customName: "",
+    customCompany: "",
+    customJurisdiction: ""
   });
 
   const [outreachStatusMessage, setOutreachStatusMessage] = useState<string | null>(null);
@@ -506,14 +510,32 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     setIsSendingOutreach(true);
     setOutreachStatusMessage(null);
 
-    const lead = leads.find((l) => l.id === outreachForm.leadId);
-    const toEmail = lead?.channelIdentities?.email;
-    const toName = lead?.displayName;
+    let toEmail = "";
+    let toName = "";
 
-    if (!toEmail) {
-      setOutreachStatusMessage("Selected lead does not have a connected email address.");
-      setIsSendingOutreach(false);
-      return;
+    if (outreachForm.leadId === "custom") {
+      toEmail = outreachForm.customEmail.trim();
+      toName = outreachForm.customName.trim() || "Valued Customer";
+      if (!toEmail) {
+        setOutreachStatusMessage("Please enter a custom email address.");
+        setIsSendingOutreach(false);
+        return;
+      }
+      if (!/\S+@\S+\.\S+/.test(toEmail)) {
+        setOutreachStatusMessage("Please enter a valid email address.");
+        setIsSendingOutreach(false);
+        return;
+      }
+    } else {
+      const lead = leads.find((l) => l.id === outreachForm.leadId);
+      toEmail = lead?.channelIdentities?.email || "";
+      toName = lead?.displayName || "";
+
+      if (!toEmail) {
+        setOutreachStatusMessage("Selected lead does not have a connected email address.");
+        setIsSendingOutreach(false);
+        return;
+      }
     }
 
     const template = templates.find((t) => t.id === outreachForm.templateId);
@@ -541,7 +563,15 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       
       setSentMessages((prev) => [data.record, ...prev]);
       setOutreachStatusMessage("Email sent successfully!");
-      setOutreachForm((prev) => ({ ...prev, subject: "", body: "" }));
+      setOutreachForm((prev) => ({
+        ...prev,
+        subject: "",
+        body: "",
+        customEmail: "",
+        customName: "",
+        customCompany: "",
+        customJurisdiction: ""
+      }));
     } catch (err) {
       setOutreachStatusMessage(err instanceof Error ? err.message : "Failed to send email");
     } finally {
@@ -549,18 +579,34 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     }
   }
 
-  function handleTemplateSelection(templateId: string, leadId: string) {
+  function handleTemplateSelection(templateId: string, leadId: string, customState?: Partial<typeof outreachForm>) {
     const template = templates.find((t) => t.id === templateId);
-    const lead = leads.find((l) => l.id === leadId);
-    if (!template || !lead) return;
+    if (!template) return;
 
     let body = template.isHtml ? (template.htmlContent || "") : template.body;
     let subject = template.subject;
 
-    // Parse variables
-    const name = lead.displayName || "there";
-    const companyName = lead.companyName || lead.displayName || "your company";
-    const jurisdiction = lead.jurisdiction || "your area";
+    let name = "there";
+    let companyName = "your company";
+    let jurisdiction = "your area";
+
+    if (leadId === "custom") {
+      const customNameVal = customState ? customState.customName : outreachForm.customName;
+      const customCompanyVal = customState ? customState.customCompany : outreachForm.customCompany;
+      const customJurisdictionVal = customState ? customState.customJurisdiction : outreachForm.customJurisdiction;
+
+      name = customNameVal || "there";
+      companyName = customCompanyVal || "your company";
+      jurisdiction = customJurisdictionVal || "your area";
+    } else {
+      const lead = leads.find((l) => l.id === leadId);
+      if (lead) {
+        name = lead.displayName || "there";
+        companyName = lead.companyName || lead.displayName || "your company";
+        jurisdiction = lead.jurisdiction || "your area";
+      }
+    }
+
     const offer = selectedCampaign?.offer || "our latest collections";
 
     body = body
@@ -1497,11 +1543,102 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       }}
                     >
                       <option value="">Select a lead...</option>
+                      <option value="custom" style={{ fontWeight: "bold" }}>✍️ Type custom email...</option>
                       {campaignLeads.filter(l => l.channelIdentities?.email).map((l) => (
                         <option value={l.id} key={l.id}>{l.displayName} ({l.channelIdentities.email})</option>
                       ))}
                     </select>
                   </label>
+
+                  {outreachForm.leadId === "custom" && (
+                    <div style={{
+                      gridColumn: "1 / -1",
+                      background: "rgba(255, 255, 255, 0.03)",
+                      padding: "1.25rem",
+                      borderRadius: "8px",
+                      border: "1px dashed var(--line)",
+                      marginTop: "0.25rem",
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      gap: "1rem"
+                    }}>
+                      <label style={{ margin: 0 }}>
+                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Target Email Address *</span>
+                        <input
+                          type="email"
+                          placeholder="e.g. contact@boutique.com"
+                          value={outreachForm.customEmail}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setOutreachForm(prev => {
+                              const updated = { ...prev, customEmail: val };
+                              if (updated.templateId) {
+                                handleTemplateSelection(updated.templateId, "custom", updated);
+                              }
+                              return updated;
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label style={{ margin: 0 }}>
+                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Recipient Name</span>
+                        <input
+                          type="text"
+                          placeholder="e.g. Fatima Rana"
+                          value={outreachForm.customName}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setOutreachForm(prev => {
+                              const updated = { ...prev, customName: val };
+                              if (updated.templateId) {
+                                handleTemplateSelection(updated.templateId, "custom", updated);
+                              }
+                              return updated;
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label style={{ margin: 0 }}>
+                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Company Name</span>
+                        <input
+                          type="text"
+                          placeholder="e.g. Fatima's Boutique"
+                          value={outreachForm.customCompany}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setOutreachForm(prev => {
+                              const updated = { ...prev, customCompany: val };
+                              if (updated.templateId) {
+                                handleTemplateSelection(updated.templateId, "custom", updated);
+                              }
+                              return updated;
+                            });
+                          }}
+                        />
+                      </label>
+
+                      <label style={{ margin: 0 }}>
+                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Country / Jurisdiction</span>
+                        <input
+                          type="text"
+                          placeholder="e.g. UK"
+                          value={outreachForm.customJurisdiction}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setOutreachForm(prev => {
+                              const updated = { ...prev, customJurisdiction: val };
+                              if (updated.templateId) {
+                                handleTemplateSelection(updated.templateId, "custom", updated);
+                              }
+                              return updated;
+                            });
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
 
                   <label>
                     <span>Select Sending Inbox</span>
@@ -1563,7 +1700,12 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                   <button
                     className="primary-action"
                     onClick={sendDirectOutreach}
-                    disabled={isSendingOutreach || !outreachForm.leadId || !outreachForm.connectionId}
+                    disabled={
+                      isSendingOutreach ||
+                      !outreachForm.leadId ||
+                      !outreachForm.connectionId ||
+                      (outreachForm.leadId === "custom" && !outreachForm.customEmail)
+                    }
                   >
                     <Mail size={18} aria-hidden="true" />
                     {isSendingOutreach ? "Sending Outreach..." : "Send Email Direct"}
