@@ -30,7 +30,8 @@ vi.mock("@/lib/apify-discovery", () => ({
           intentScore: 50,
           riskScore: 30,
           sensitiveCategoryFlags: [],
-          channelIdentities: { email: "test@example.com" }
+          channelIdentities: { email: "test@example.com" },
+          status: "candidate"
         } as LeadRecord
       ]
     };

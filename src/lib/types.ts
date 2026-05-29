@@ -261,6 +261,6 @@ export interface SentMessage {
   subject: string;
   body: string;
   sentAt: string;
-  status: "sent" | "failed";
+  status: "sent" | "failed" | "sending";
   error?: string;
 }
