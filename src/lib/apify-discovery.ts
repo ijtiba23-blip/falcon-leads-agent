@@ -44,7 +44,7 @@ const jurisdictionFallbacks = ["jurisdiction", "countryCode", "country", "region
 const segmentFallbacks = ["segment", "categoryName", "category", "industry", "headline", "description"];
 
 export async function runApifyLeadDiscovery(
-  request: ApifyDiscoveryRequest,
+  request: ApifyDiscoveryRequest & { onlyEmails?: boolean },
   campaign: Campaign
 ): Promise<ApifyDiscoveryResult> {
   const token = process.env.APIFY_TOKEN;
@@ -62,9 +62,12 @@ export async function runApifyLeadDiscovery(
     throw new Error(`Apify actor ${request.actorId} finished without a default dataset.`);
   }
 
+  // Retrieve a larger set of items to allow filtering down to request.maxItems with email matching
+  const datasetLimit = request.onlyEmails ? Math.max(request.maxItems * 10, 300) : request.maxItems;
+
   const { items } = await client.dataset<ApifyDatasetItem>(run.defaultDatasetId).listItems({
     clean: true,
-    limit: request.maxItems
+    limit: datasetLimit
   });
 
   const importedLeads = items.map((item) => normalizeApifyItemToLead(item, request, campaign));

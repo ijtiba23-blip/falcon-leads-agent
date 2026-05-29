@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { summarizeCampaign } from "@/lib/policy-engine";
+import { getApifySourcePresets, getApifySourcePreset } from "@/lib/apify-presets";
 import type {
   AgentDefinition,
   AgentRunResult,
@@ -103,7 +104,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     location: "London, United Kingdom",
     leadLimit: 50,
     inboxId: "",
-    templateId: ""
+    templateId: "",
+    sourceKey: "google_maps" as ApifySourceKey
   });
   const [isWizardRunning, setIsWizardRunning] = useState(false);
   const [wizardStatus, setWizardStatus] = useState<string | null>(null);
@@ -622,7 +624,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const runAdsWizardCampaign = async () => {
     setIsWizardRunning(true);
     setWizardStatus("Creating campaign folder...");
-    setWizardLog(["Initializing B2B campaign creation..."]);
+    setWizardLog(["Initializing campaign creation..."]);
+    setIsRunCampaignModalOpen(false); // Close the popup modal immediately!
 
     try {
       // 1. Create the campaign folder
@@ -651,19 +654,32 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       setSelectedCampaignId(newCampaign.id);
 
       setWizardLog(prev => [...prev, `Campaign "${newCampaign.name}" successfully created.`]);
-      setWizardStatus("Triggering Apify scraper (Google Maps)...");
+      
+      const preset = getApifySourcePreset(wizardForm.sourceKey);
+      setWizardStatus(`Triggering Apify scraper (${preset?.label || wizardForm.sourceKey})...`);
+
+      // Scale limits to ensure enough business contacts/emails are found
+      const crawlLimit = Math.max(wizardForm.leadLimit * 4, 150);
 
       // 2. Run Apify Scraper to extract leads dynamically
       const discoveryPayload = {
         campaignId: newCampaign.id,
-        sourceKey: "google_maps" as ApifySourceKey,
+        sourceKey: wizardForm.sourceKey,
         maxItems: wizardForm.leadLimit,
         actorInput: {
+          ...(preset?.defaultActorInput ?? {}),
           searchStringsArray: wizardForm.keywords.split("\n").map(k => k.trim()).filter(Boolean),
           locationQuery: wizardForm.location,
-          maxCrawledPlacesPerSearch: wizardForm.leadLimit,
+          maxCrawledPlacesPerSearch: crawlLimit,
+          maxItems: crawlLimit,
+          resultsLimit: crawlLimit,
+          maxResults: crawlLimit,
+          maxCrawledPlaces: crawlLimit,
           skipClosedPlaces: true,
-          scrapeReviewsPersonalData: false
+          scrapeReviewsPersonalData: false,
+          scrapePlaceDetailPage: true,
+          scrapeContacts: true,
+          website: "allPlaces"
         },
         onlyEmails: true
       };
@@ -1631,6 +1647,104 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                 </div>
               </div>
             </article>
+
+            {/* Live Scraper & Outreach Console (Dynamically displayed when wizard campaign is active or logs are present) */}
+            {(isWizardRunning || wizardLog.length > 0) && (
+              <article style={{
+                background: "linear-gradient(135deg, #090909 0%, #121212 100%)",
+                border: "1px solid rgba(155, 123, 58, 0.4)",
+                borderRadius: "8px",
+                padding: "1.5rem",
+                color: "#10b981",
+                fontFamily: "monospace",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "1rem"
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(155,123,58,0.2)", paddingBottom: "0.75rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    {isWizardRunning ? (
+                      <div style={{
+                        border: "2px solid rgba(16,185,129,0.15)",
+                        borderTop: "2px solid #10b981",
+                        borderRadius: "50%",
+                        width: "18px",
+                        height: "18px",
+                        animation: "spin 1s linear infinite"
+                      }}></div>
+                    ) : (
+                      <span style={{ color: "#d4af37" }}>⚜</span>
+                    )}
+                    <span style={{ fontFamily: "Cinzel, serif", fontSize: "0.95rem", color: "#d4af37", letterSpacing: "0.05em" }}>
+                      {isWizardRunning ? "LIVE SCRAPER & OUTREACH CONSOLE" : "COMPLETED OUTREACH LOGS"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button 
+                      onClick={() => {
+                        setWizardLog([]);
+                        setWizardStatus(null);
+                      }}
+                      disabled={isWizardRunning}
+                      style={{
+                        background: "rgba(239, 68, 68, 0.1)",
+                        border: "1px solid rgba(239, 68, 68, 0.3)",
+                        color: "#ef4444",
+                        padding: "0.25rem 0.6rem",
+                        fontSize: "0.7rem",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontFamily: "DM Sans, sans-serif"
+                      }}
+                    >
+                      Clear Logs
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "1rem", alignItems: "center", background: "rgba(255,255,255,0.02)", padding: "0.75rem", borderRadius: "4px" }}>
+                  <div>
+                    <div style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", marginBottom: "0.15rem", fontFamily: "DM Sans, sans-serif" }}>Current Status</div>
+                    <div style={{ fontSize: "0.85rem", color: "#fff", fontFamily: "DM Sans, sans-serif" }}>{wizardStatus || "Initializing sequence..."}</div>
+                  </div>
+                  {isWizardRunning && (
+                    <div style={{
+                      background: "rgba(16,185,129,0.1)",
+                      border: "1px solid rgba(16,185,129,0.2)",
+                      padding: "0.25rem 0.5rem",
+                      borderRadius: "12px",
+                      fontSize: "0.65rem",
+                      color: "#10b981",
+                      textTransform: "uppercase",
+                      fontWeight: "bold",
+                      letterSpacing: "0.05em",
+                      fontFamily: "DM Sans, sans-serif"
+                    }}>
+                      Running
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ 
+                  height: "220px", 
+                  overflowY: "auto", 
+                  background: "rgba(0,0,0,0.5)", 
+                  border: "1px solid rgba(255,255,255,0.08)", 
+                  borderRadius: "4px", 
+                  padding: "0.75rem", 
+                  fontSize: "0.78rem", 
+                  lineHeight: "1.5" 
+                }}>
+                  {wizardLog.map((log, index) => (
+                    <div key={index} style={{ marginBottom: "0.3rem" }}>
+                      &gt; {log}
+                    </div>
+                  ))}
+                  {wizardLog.length === 0 && <div style={{ opacity: 0.4 }}>Standing by. Initiating backend processes...</div>}
+                </div>
+              </article>
+            )}
 
             {/* Campaign Listing Grid Panel */}
             <article className="panel" style={{ flexGrow: 1 }}>
@@ -3403,6 +3517,24 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       />
                     </label>
 
+                    <label style={{ display: "block" }}>
+                      <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Platform / Scraper Source</span>
+                      <select 
+                        value={wizardForm.sourceKey} 
+                        onChange={e => setWizardForm(form => ({ ...form, sourceKey: e.target.value as ApifySourceKey }))}
+                        style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                      >
+                        {getApifySourcePresets().map(preset => (
+                          <option value={preset.key} key={preset.key}>
+                            {preset.label} ({preset.riskLevel.toUpperCase()} RISK)
+                          </option>
+                        ))}
+                      </select>
+                      <small style={{ display: "block", opacity: 0.6, fontSize: "0.7rem", marginTop: "0.25rem", color: "#d4af37" }}>
+                        {getApifySourcePreset(wizardForm.sourceKey)?.recommendedUse}
+                      </small>
+                    </label>
+
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
                       <label>
                         <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Target Location / Country</span>
@@ -3529,6 +3661,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           <tbody>
                             <tr><td style={{ padding: "4px 0", opacity: 0.6 }}>Campaign Name:</td><td><strong>{wizardForm.name}</strong></td></tr>
                             <tr><td style={{ padding: "4px 0", opacity: 0.6 }}>Target Jurisdiction:</td><td><strong>{wizardForm.jurisdiction}</strong></td></tr>
+                            <tr><td style={{ padding: "4px 0", opacity: 0.6 }}>Scraper Platform:</td><td><strong>{getApifySourcePreset(wizardForm.sourceKey)?.label || wizardForm.sourceKey}</strong></td></tr>
                             <tr><td style={{ padding: "4px 0", opacity: 0.6 }}>Dispatched Limit:</td><td><strong>{wizardForm.leadLimit} emails</strong></td></tr>
                             <tr><td style={{ padding: "4px 0", opacity: 0.6 }}>SMTP Connection:</td><td><strong>{connections.find(c => c.id === wizardForm.inboxId)?.email || "N/A"}</strong></td></tr>
                             <tr><td style={{ padding: "4px 0", opacity: 0.6 }}>Compiled Template:</td><td><strong>{templates.find(t => t.id === wizardForm.templateId)?.name || "N/A"}</strong></td></tr>

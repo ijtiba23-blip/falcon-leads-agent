@@ -295,12 +295,14 @@ export async function discoverLeadsWithApify(request: ApifyDiscoveryRequest & { 
     ? result.importedLeads.filter((lead) => Boolean(lead.channelIdentities?.email))
     : result.importedLeads;
 
-  db.leads.unshift(...filteredLeads);
+  const slicedLeads = filteredLeads.slice(0, request.maxItems);
+
+  db.leads.unshift(...slicedLeads);
   saveDb(db);
 
   return {
     ...result,
-    importedLeads: filteredLeads
+    importedLeads: slicedLeads
   };
 }
 
