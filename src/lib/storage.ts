@@ -165,16 +165,19 @@ export function clearDemoData() {
   const removedCampaigns = db.campaigns.length;
   const removedLeads = db.leads.length;
   const removedRuns = db.agentRuns.length;
+  const removedOutreach = db.sentMessages.length;
 
   db.campaigns = [];
   db.leads = [];
   db.agentRuns = [];
+  db.sentMessages = [];
   saveDb(db);
 
   return {
     removedCampaigns,
     removedLeads,
-    removedRuns
+    removedRuns,
+    removedOutreach
   };
 }
 
