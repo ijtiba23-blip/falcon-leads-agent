@@ -980,6 +980,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [manualPasteText, setManualPasteText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [campaignForm, setCampaignForm] = useState({
     name: "Modest Long Coat Outreach",
     type: "b2b" as CampaignType,
@@ -1130,6 +1131,114 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     }
   }
 
+  async function processImportedLines(lines: string[]) {
+    if (!selectedCampaign) throw new Error("Select a campaign first.");
+    
+    const parsedLeads: LeadRecord[] = [];
+
+    for (const line of lines) {
+      // Skip header line if present
+      const lowercaseLine = line.toLowerCase();
+      if (lowercaseLine.includes("email") && (lowercaseLine.includes("name") || lowercaseLine.includes("company") || lowercaseLine.includes("website"))) {
+        continue;
+      }
+
+      // Support comma, tab, or semicolon separated columns
+      let parts: string[] = [];
+      if (line.includes("\t")) {
+        parts = line.split("\t");
+      } else if (line.includes(";")) {
+        parts = line.split(";");
+      } else {
+        parts = line.split(",");
+      }
+
+      parts = parts.map(p => p.trim());
+
+      let displayName = "";
+      let email = "";
+      let companyName = "";
+      let jurisdiction = selectedCampaign.jurisdictions?.[0] || "US";
+
+      if (parts.length === 1) {
+        // Just email address
+        email = parts[0];
+        displayName = email.split("@")[0] || "Manual Lead";
+        companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+      } else if (parts.length === 2) {
+        // name, email
+        displayName = parts[0];
+        email = parts[1];
+        companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+      } else if (parts.length === 3) {
+        // name, email, company
+        displayName = parts[0];
+        email = parts[1];
+        companyName = parts[2];
+      } else if (parts.length >= 4) {
+        // name, email, company, jurisdiction
+        displayName = parts[0];
+        email = parts[1];
+        companyName = parts[2];
+        jurisdiction = parts[3];
+      }
+
+      // Quick basic email validation regex
+      if (!email || !email.includes("@")) {
+        continue;
+      }
+
+      const newLead: LeadRecord = {
+        id: `lead_${Math.random().toString(36).substring(2, 11)}`,
+        agencyId: selectedCampaign.agencyId,
+        clientId: selectedCampaign.clientId,
+        campaignId: selectedCampaign.id,
+        displayName,
+        type: selectedCampaign.type === "b2c" ? "b2c_profile" : "b2b_contact",
+        companyName,
+        segment: "Manually Imported Lead",
+        jurisdiction,
+        sourceType: "manual_import",
+        sourceUrl: "manual_import",
+        lane: selectedCampaign.lane || "consented_inbound",
+        consentStatus: "granted",
+        optOutStatus: "clear",
+        fitScore: 100,
+        intentScore: 85,
+        riskScore: 10,
+        sensitiveCategoryFlags: [],
+        channelIdentities: {
+          email: email
+        },
+        website: email.includes("@") ? `https://${email.split("@")[1]}` : undefined,
+        status: "candidate"
+      };
+
+      parsedLeads.push(newLead);
+    }
+
+    if (parsedLeads.length === 0) {
+      throw new Error("No valid lead records containing email addresses could be parsed.");
+    }
+
+    const response = await fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        campaignId: selectedCampaign.id,
+        leads: parsedLeads
+      })
+    });
+
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error || "Failed to import leads on server");
+    }
+
+    setLeads((current) => [...parsedLeads, ...current]);
+    setImportMessage(`Successfully imported ${parsedLeads.length} leads!`);
+  }
+
   async function handleManualImport() {
     if (!selectedCampaign) {
       setImportMessage("Select a campaign first.");
@@ -1146,112 +1255,92 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
 
     try {
       const lines = manualPasteText.split("\n").map(l => l.trim()).filter(Boolean);
-      const parsedLeads: LeadRecord[] = [];
-
-      for (const line of lines) {
-        // Skip header line if present
-        if (line.toLowerCase().includes("email") && (line.toLowerCase().includes("name") || line.toLowerCase().includes("company"))) {
-          continue;
-        }
-
-        // Support comma, tab, or semicolon separated columns
-        let parts: string[] = [];
-        if (line.includes("\t")) {
-          parts = line.split("\t");
-        } else if (line.includes(";")) {
-          parts = line.split(";");
-        } else {
-          parts = line.split(",");
-        }
-
-        parts = parts.map(p => p.trim());
-
-        let displayName = "";
-        let email = "";
-        let companyName = "";
-        let jurisdiction = selectedCampaign.jurisdictions?.[0] || "US";
-
-        if (parts.length === 1) {
-          // Just email address
-          email = parts[0];
-          displayName = email.split("@")[0] || "Manual Lead";
-          companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
-        } else if (parts.length === 2) {
-          // name, email
-          displayName = parts[0];
-          email = parts[1];
-          companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
-        } else if (parts.length === 3) {
-          // name, email, company
-          displayName = parts[0];
-          email = parts[1];
-          companyName = parts[2];
-        } else if (parts.length >= 4) {
-          // name, email, company, jurisdiction
-          displayName = parts[0];
-          email = parts[1];
-          companyName = parts[2];
-          jurisdiction = parts[3];
-        }
-
-        // Quick basic email validation regex
-        if (!email || !email.includes("@")) {
-          continue;
-        }
-
-        const newLead: LeadRecord = {
-          id: `lead_${Math.random().toString(36).substring(2, 11)}`,
-          agencyId: selectedCampaign.agencyId,
-          clientId: selectedCampaign.clientId,
-          campaignId: selectedCampaign.id,
-          displayName,
-          type: selectedCampaign.type === "b2c" ? "b2c_profile" : "b2b_contact",
-          companyName,
-          segment: "Manually Imported Lead",
-          jurisdiction,
-          sourceType: "manual_import",
-          sourceUrl: "manual_import",
-          lane: selectedCampaign.lane || "consented_inbound",
-          consentStatus: "granted",
-          optOutStatus: "clear",
-          fitScore: 100,
-          intentScore: 85,
-          riskScore: 10,
-          sensitiveCategoryFlags: [],
-          channelIdentities: {
-            email: email
-          },
-          website: email.includes("@") ? `https://${email.split("@")[1]}` : undefined,
-          status: "candidate"
-        };
-
-        parsedLeads.push(newLead);
-      }
-
-      if (parsedLeads.length === 0) {
-        throw new Error("No valid lead records containing email addresses could be parsed.");
-      }
-
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campaignId: selectedCampaign.id,
-          leads: parsedLeads
-        })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Failed to import leads on server");
-      }
-
-      setLeads((current) => [...parsedLeads, ...current]);
-      setImportMessage(`Successfully imported ${parsedLeads.length} leads manually!`);
+      await processImportedLines(lines);
       setManualPasteText("");
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : "Failed to import leads manually");
     } finally {
+      setIsImporting(false);
+    }
+  }
+
+  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadedFileName(file.name);
+    setImportMessage(null);
+    setIsImporting(true);
+
+    try {
+      const extension = file.name.split('.').pop()?.toLowerCase();
+      
+      if (extension === 'xlsx' || extension === 'xls') {
+        const { read, utils } = await import('xlsx');
+        const reader = new FileReader();
+        
+        reader.onload = async (e) => {
+          try {
+            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            const workbook = read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            if (!sheetName) throw new Error("Excel sheet is empty.");
+            
+            const sheet = workbook.Sheets[sheetName];
+            const rows = utils.sheet_to_json<any[]>(sheet, { header: 1 });
+            
+            if (rows.length === 0) throw new Error("No rows found in Excel sheet.");
+            
+            const lines: string[] = [];
+            for (const row of rows) {
+              if (Array.isArray(row) && row.length > 0) {
+                const filteredRow = row.map(cell => cell !== undefined && cell !== null ? String(cell).trim() : "");
+                if (filteredRow.some(cell => cell !== "")) {
+                  lines.push(filteredRow.join(","));
+                }
+              }
+            }
+            
+            if (lines.length === 0) throw new Error("No valid records found in Excel sheet.");
+            await processImportedLines(lines);
+          } catch (err) {
+            setImportMessage(err instanceof Error ? err.message : "Failed to parse Excel file");
+          } finally {
+            setIsImporting(false);
+          }
+        };
+        
+        reader.onerror = () => {
+          setImportMessage("Failed to read Excel file.");
+          setIsImporting(false);
+        };
+        
+        reader.readAsArrayBuffer(file);
+      } else {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          try {
+            const text = e.target?.result as string;
+            if (!text.trim()) throw new Error("File is empty.");
+            
+            const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+            await processImportedLines(lines);
+          } catch (err) {
+            setImportMessage(err instanceof Error ? err.message : "Failed to parse CSV/TXT file");
+          } finally {
+            setIsImporting(false);
+          }
+        };
+        
+        reader.onerror = () => {
+          setImportMessage("Failed to read CSV/TXT file.");
+          setIsImporting(false);
+        };
+        
+        reader.readAsText(file);
+      }
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : "Failed to import file");
       setIsImporting(false);
     }
   }
@@ -2431,6 +2520,51 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                     style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontFamily: "monospace", fontSize: "0.8rem", lineHeight: "1.4" }}
                   />
                 </label>
+
+                {/* File Upload Section */}
+                <div style={{ 
+                  marginTop: "0.5rem", 
+                  borderTop: "1px dashed rgba(168, 144, 96, 0.25)", 
+                  paddingTop: "1rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem"
+                }}>
+                  <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", fontWeight: 600 }}>
+                    📂 Or Upload Data File (CSV, TXT, Excel .xlsx / .xls)
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    <input 
+                      type="file" 
+                      accept=".csv,.txt,.xlsx,.xls" 
+                      onChange={handleFileUpload} 
+                      style={{ display: "none" }} 
+                      id="lead-file-upload" 
+                    />
+                    <label 
+                      htmlFor="lead-file-upload" 
+                      style={{ 
+                        padding: "0.5rem 1rem", 
+                        background: "rgba(168, 144, 96, 0.08)", 
+                        border: "1px dashed #a89060", 
+                        borderRadius: "4px", 
+                        color: "#a89060", 
+                        fontSize: "0.8rem", 
+                        fontWeight: "600", 
+                        cursor: "pointer", 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "0.5rem",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      📁 Choose File to Import
+                    </label>
+                    <span style={{ fontSize: "0.75rem", color: "var(--ink)", opacity: 0.8 }}>
+                      {uploadedFileName ? `Selected: ${uploadedFileName}` : "No file chosen"}
+                    </span>
+                  </div>
+                </div>
 
                 <div className="button-row" style={{ marginTop: "0.5rem" }}>
                   <button className="primary-action" onClick={handleManualImport} disabled={isImporting || !selectedCampaign}>
