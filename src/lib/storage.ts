@@ -296,7 +296,7 @@ export async function discoverLeadsWithApify(request: ApifyDiscoveryRequest & { 
     ? result.importedLeads.filter((lead) => Boolean(lead.channelIdentities?.email))
     : result.importedLeads;
 
-  const slicedLeads = filteredLeads.slice(0, request.maxItems);
+  const slicedLeads = filteredLeads;
 
   db.leads.unshift(...slicedLeads);
   saveDb(db);
@@ -366,7 +366,7 @@ export async function importApifyDiscoveryResults(
     ? importedLeads.filter((lead) => Boolean(lead.channelIdentities?.email))
     : importedLeads;
 
-  const slicedLeads = filteredLeads.slice(0, request.maxItems);
+  const slicedLeads = filteredLeads;
 
   db.leads.unshift(...slicedLeads);
   saveDb(db);

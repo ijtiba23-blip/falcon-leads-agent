@@ -129,6 +129,9 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     inboxId?: string;
     templateId?: string;
   } | null>(null);
+  const [outreachMode, setOutreachMode] = useState<"single" | "bulk">("single");
+  const [isSendingBulkOutreach, setIsSendingBulkOutreach] = useState(false);
+  const [bulkOutreachProgress, setBulkOutreachProgress] = useState<string | null>(null);
 
   // Responses Inbox states
   const [mockInbox, setMockInbox] = useState([
@@ -1810,6 +1813,120 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     }
   }
 
+  async function sendBulkOutreach() {
+    const eligibleLeads = campaignLeads.filter(l => l.channelIdentities?.email);
+    if (eligibleLeads.length === 0) {
+      setBulkOutreachProgress("Error: No leads with valid email addresses in this campaign.");
+      return;
+    }
+    if (!outreachForm.connectionId || !outreachForm.templateId) {
+      setBulkOutreachProgress("Error: Please select a sending inbox and a template.");
+      return;
+    }
+
+    setIsSendingBulkOutreach(true);
+    setBulkOutreachProgress(`Preparing to send ${eligibleLeads.length} emails...`);
+
+    const template = templates.find((t) => t.id === outreachForm.templateId);
+    if (!template) {
+      setBulkOutreachProgress("Error: Template not found.");
+      setIsSendingBulkOutreach(false);
+      return;
+    }
+
+    const isHtml = template.isHtml || false;
+    const attachments = selectedCampaign?.attachments || [];
+    const offerText = selectedCampaign?.offer || "our latest collections";
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < eligibleLeads.length; i++) {
+      const lead = eligibleLeads[i];
+      const toEmail = lead.channelIdentities.email!;
+      const toName = lead.displayName || "there";
+      const companyName = lead.companyName || lead.displayName || "your company";
+      const jurisdiction = lead.jurisdiction || "your area";
+
+      // Update progress state
+      setBulkOutreachProgress(`Sending ${i + 1} of ${eligibleLeads.length}: ${toName} (${toEmail})...`);
+
+      // Compile templates dynamically
+      let body = template.isHtml ? (template.htmlContent || "") : template.body;
+      let subject = template.subject;
+
+      const replaceVars = (text: string) => {
+        if (!text) return "";
+        return text
+          .replaceAll("{{name}}", toName)
+          .replaceAll("{{Name}}", toName)
+          .replaceAll("{{NAME}}", toName)
+          .replaceAll("{{companyName}}", companyName)
+          .replaceAll("{{company}}", companyName)
+          .replaceAll("{{CompanyName}}", companyName)
+          .replaceAll("{{Company}}", companyName)
+          .replaceAll("{{COMPANY}}", companyName)
+          .replaceAll("{{jurisdiction}}", jurisdiction)
+          .replaceAll("{{Jurisdiction}}", jurisdiction)
+          .replaceAll("{{offer}}", offerText)
+          .replaceAll("{{Offer}}", offerText);
+      };
+
+      const compiledSubject = replaceVars(subject);
+      const compiledBody = replaceVars(body);
+
+      try {
+        const res = await fetch("/api/outreach/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadId: lead.id,
+            campaignId: selectedCampaign?.id,
+            connectionId: outreachForm.connectionId,
+            subject: compiledSubject,
+            emailBody: compiledBody,
+            toEmail,
+            toName,
+            isHtml,
+            attachments
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to send email");
+
+        setSentMessages((prev) => [data.record, ...prev]);
+        successCount++;
+      } catch (err) {
+        console.error(`Failed to send to ${toEmail}:`, err);
+        // Create a mock failed message record to show in UI
+        const mockFailedRecord = {
+          id: `sent_fail_${Date.now()}_${i}`,
+          leadId: lead.id,
+          leadName: toName,
+          leadEmail: toEmail,
+          campaignId: selectedCampaign?.id || "custom",
+          connectionId: outreachForm.connectionId,
+          subject: compiledSubject,
+          body: compiledBody,
+          status: "failed" as const,
+          error: err instanceof Error ? err.message : "SMTP send failed",
+          sentAt: new Date().toISOString()
+        };
+        setSentMessages((prev) => [mockFailedRecord, ...prev]);
+        failCount++;
+      }
+
+      // Add a slight delay (500ms) to ensure smooth SMTP sending
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    setBulkOutreachProgress(
+      `🎉 Bulk send complete! Successfully sent: ${successCount} emails. Failed: ${failCount} emails.`
+    );
+    setIsSendingBulkOutreach(false);
+  }
+
   function updateOutreachTemplateFields(templateId: string, leadId: string, customStateOverride?: Partial<typeof outreachForm>) {
     setOutreachForm((prev) => {
       const currentState = { ...prev, ...customStateOverride };
@@ -3331,186 +3448,317 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                   <Play size={20} aria-hidden="true" />
                 </div>
 
-                <div className="form-grid">
-                  <label>
-                    <span>Campaign context</span>
-                    <select value={selectedCampaignId} onChange={(event) => setSelectedCampaignId(event.target.value)}>
-                      {campaigns.map((c) => (
-                        <option value={c.id} key={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </label>
+                {/* Sub-navigation tabs for Single vs Bulk */}
+                <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.25rem", borderBottom: "1px solid var(--line)", paddingBottom: "0.5rem" }}>
+                  <button 
+                    onClick={() => setOutreachMode("single")}
+                    style={{
+                      background: outreachMode === "single" ? "rgba(155, 123, 58, 0.15)" : "transparent",
+                      border: "none",
+                      color: outreachMode === "single" ? "#d4af37" : "var(--ink)",
+                      padding: "0.4rem 1rem",
+                      fontSize: "0.85rem",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      borderRadius: "4px"
+                    }}
+                  >
+                    👤 Single Lead Send
+                  </button>
+                  <button 
+                    onClick={() => setOutreachMode("bulk")}
+                    style={{
+                      background: outreachMode === "bulk" ? "rgba(155, 123, 58, 0.15)" : "transparent",
+                      border: "none",
+                      color: outreachMode === "bulk" ? "#d4af37" : "var(--ink)",
+                      padding: "0.4rem 1rem",
+                      fontSize: "0.85rem",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      borderRadius: "4px"
+                    }}
+                  >
+                    👥 Campaign Bulk Send
+                  </button>
+                </div>
 
-                  <label>
-                    <span>Target Lead (with email)</span>
-                    <select
-                      value={outreachForm.leadId}
-                      onChange={(event) => {
-                        const val = event.target.value;
-                        if (outreachForm.templateId) {
-                          updateOutreachTemplateFields(outreachForm.templateId, val, { leadId: val });
-                        } else {
-                          setOutreachForm((prev) => ({ ...prev, leadId: val }));
-                        }
-                      }}
-                    >
-                      <option value="">Select a lead...</option>
-                      <option value="custom" style={{ fontWeight: "bold" }}>✍️ Type custom email...</option>
-                      {campaignLeads.filter(l => l.channelIdentities?.email).map((l) => (
-                        <option value={l.id} key={l.id}>{l.displayName} ({l.channelIdentities.email})</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {outreachForm.leadId === "custom" && (
-                    <div style={{
-                      gridColumn: "1 / -1",
-                      background: "rgba(255, 255, 255, 0.03)",
-                      padding: "1.25rem",
-                      borderRadius: "8px",
-                      border: "1px dashed var(--line)",
-                      marginTop: "0.25rem",
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                      gap: "1rem"
-                    }}>
-                      <label style={{ margin: 0 }}>
-                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Target Email Address *</span>
-                        <input
-                          type="email"
-                          placeholder="e.g. contact@boutique.com"
-                          value={outreachForm.customEmail}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setOutreachForm(prev => ({ ...prev, customEmail: val }));
-                          }}
-                        />
+                {outreachMode === "single" ? (
+                  <>
+                    <div className="form-grid">
+                      <label>
+                        <span>Campaign context</span>
+                        <select value={selectedCampaignId} onChange={(event) => setSelectedCampaignId(event.target.value)}>
+                          {campaigns.map((c) => (
+                            <option value={c.id} key={c.id}>{c.name}</option>
+                          ))}
+                        </select>
                       </label>
 
-                      <label style={{ margin: 0 }}>
-                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Recipient Name</span>
-                        <input
-                          type="text"
-                          placeholder="e.g. Fatima Rana"
-                          value={outreachForm.customName}
-                          onChange={(e) => {
-                            const val = e.target.value;
+                      <label>
+                        <span>Target Lead (with email)</span>
+                        <select
+                          value={outreachForm.leadId}
+                          onChange={(event) => {
+                            const val = event.target.value;
                             if (outreachForm.templateId) {
-                              updateOutreachTemplateFields(outreachForm.templateId, "custom", { customName: val });
+                              updateOutreachTemplateFields(outreachForm.templateId, val, { leadId: val });
                             } else {
-                              setOutreachForm(prev => ({ ...prev, customName: val }));
+                              setOutreachForm((prev) => ({ ...prev, leadId: val }));
                             }
                           }}
-                        />
+                        >
+                          <option value="">Select a lead...</option>
+                          <option value="custom" style={{ fontWeight: "bold" }}>✍️ Type custom email...</option>
+                          {campaignLeads.filter(l => l.channelIdentities?.email).map((l) => (
+                            <option value={l.id} key={l.id}>{l.displayName} ({l.channelIdentities.email})</option>
+                          ))}
+                        </select>
                       </label>
 
-                      <label style={{ margin: 0 }}>
-                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Company Name</span>
-                        <input
-                          type="text"
-                          placeholder="e.g. Fatima's Boutique"
-                          value={outreachForm.customCompany}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (outreachForm.templateId) {
-                              updateOutreachTemplateFields(outreachForm.templateId, "custom", { customCompany: val });
-                            } else {
-                              setOutreachForm(prev => ({ ...prev, customCompany: val }));
-                            }
-                          }}
-                        />
+                      {outreachForm.leadId === "custom" && (
+                        <div style={{
+                          gridColumn: "1 / -1",
+                          background: "rgba(255, 255, 255, 0.03)",
+                          padding: "1.25rem",
+                          borderRadius: "8px",
+                          border: "1px dashed var(--line)",
+                          marginTop: "0.25rem",
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                          gap: "1rem"
+                        }}>
+                          <label style={{ margin: 0 }}>
+                            <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Target Email Address *</span>
+                            <input
+                              type="email"
+                              placeholder="e.g. contact@boutique.com"
+                              value={outreachForm.customEmail}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setOutreachForm(prev => ({ ...prev, customEmail: val }));
+                              }}
+                            />
+                          </label>
+
+                          <label style={{ margin: 0 }}>
+                            <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Recipient Name</span>
+                            <input
+                              type="text"
+                              placeholder="e.g. Fatima Rana"
+                              value={outreachForm.customName}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (outreachForm.templateId) {
+                                  updateOutreachTemplateFields(outreachForm.templateId, "custom", { customName: val });
+                                } else {
+                                  setOutreachForm(prev => ({ ...prev, customName: val }));
+                                }
+                              }}
+                            />
+                          </label>
+
+                          <label style={{ margin: 0 }}>
+                            <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Company Name</span>
+                            <input
+                              type="text"
+                              placeholder="e.g. Fatima's Boutique"
+                              value={outreachForm.customCompany}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (outreachForm.templateId) {
+                                  updateOutreachTemplateFields(outreachForm.templateId, "custom", { customCompany: val });
+                                } else {
+                                  setOutreachForm(prev => ({ ...prev, customCompany: val }));
+                                }
+                              }}
+                            />
+                          </label>
+
+                          <label style={{ margin: 0 }}>
+                            <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Country / Jurisdiction</span>
+                            <input
+                              type="text"
+                              placeholder="e.g. UK"
+                              value={outreachForm.customJurisdiction}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (outreachForm.templateId) {
+                                  updateOutreachTemplateFields(outreachForm.templateId, "custom", { customJurisdiction: val });
+                                } else {
+                                  setOutreachForm(prev => ({ ...prev, customJurisdiction: val }));
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                      )}
+
+                      <label>
+                        <span>Select Sending Inbox</span>
+                        <select
+                          value={outreachForm.connectionId}
+                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, connectionId: event.target.value }))}
+                        >
+                          <option value="">Select connected inbox...</option>
+                          {connections.map((c) => (
+                            <option value={c.id} key={c.id}>{c.email} ({c.smtpHost})</option>
+                          ))}
+                        </select>
                       </label>
 
-                      <label style={{ margin: 0 }}>
-                        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.8 }}>Country / Jurisdiction</span>
-                        <input
-                          type="text"
-                          placeholder="e.g. UK"
-                          value={outreachForm.customJurisdiction}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (outreachForm.templateId) {
-                              updateOutreachTemplateFields(outreachForm.templateId, "custom", { customJurisdiction: val });
-                            } else {
-                              setOutreachForm(prev => ({ ...prev, customJurisdiction: val }));
-                            }
+                      <label>
+                        <span>Select Template</span>
+                        <select
+                          value={outreachForm.templateId}
+                          onChange={(event) => {
+                            const val = event.target.value;
+                            updateOutreachTemplateFields(val, outreachForm.leadId);
                           }}
+                        >
+                          <option value="">Select template...</option>
+                          {templates.map((t) => (
+                            <option value={t.id} key={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="form-grid" style={{ marginTop: "1rem" }}>
+                      <label className="wide-field">
+                        <span>Populated Subject Line (editable)</span>
+                        <input
+                          placeholder="Subject"
+                          value={outreachForm.subject}
+                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, subject: event.target.value }))}
+                        />
+                      </label>
+                      <label className="wide-field">
+                        <span>Populated Message Body (editable)</span>
+                        <textarea
+                          placeholder="Message content"
+                          rows={8}
+                          value={outreachForm.body}
+                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, body: event.target.value }))}
                         />
                       </label>
                     </div>
-                  )}
 
-                  <label>
-                    <span>Select Sending Inbox</span>
-                    <select
-                      value={outreachForm.connectionId}
-                      onChange={(event) => setOutreachForm((prev) => ({ ...prev, connectionId: event.target.value }))}
-                    >
-                      <option value="">Select connected inbox...</option>
-                      {connections.map((c) => (
-                        <option value={c.id} key={c.id}>{c.email} ({c.smtpHost})</option>
-                      ))}
-                    </select>
-                  </label>
+                    {outreachStatusMessage && (
+                      <p className="helper-text" style={{ color: outreachStatusMessage.includes("successfully") ? "#22c55e" : "#ef4444", fontWeight: "bold" }}>
+                        {outreachStatusMessage}
+                      </p>
+                    )}
 
-                  <label>
-                    <span>Select Template</span>
-                    <select
-                      value={outreachForm.templateId}
-                      onChange={(event) => {
-                        const val = event.target.value;
-                        updateOutreachTemplateFields(val, outreachForm.leadId);
-                      }}
-                    >
-                      <option value="">Select template...</option>
-                      {templates.map((t) => (
-                        <option value={t.id} key={t.id}>{t.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                    <div className="button-row">
+                      <button
+                        className="primary-action"
+                        onClick={sendDirectOutreach}
+                        disabled={
+                          isSendingOutreach ||
+                          !outreachForm.leadId ||
+                          !outreachForm.connectionId ||
+                          (outreachForm.leadId === "custom" && !outreachForm.customEmail)
+                        }
+                      >
+                        <Mail size={18} aria-hidden="true" />
+                        {isSendingOutreach ? "Sending Outreach..." : "Send Email Direct"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="form-grid">
+                      <label>
+                        <span>Campaign Context</span>
+                        <select value={selectedCampaignId} onChange={(event) => setSelectedCampaignId(event.target.value)}>
+                          {campaigns.map((c) => (
+                            <option value={c.id} key={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </label>
 
-                <div className="form-grid" style={{ marginTop: "1rem" }}>
-                  <label className="wide-field">
-                    <span>Populated Subject Line (editable)</span>
-                    <input
-                      placeholder="Subject"
-                      value={outreachForm.subject}
-                      onChange={(event) => setOutreachForm((prev) => ({ ...prev, subject: event.target.value }))}
-                    />
-                  </label>
-                  <label className="wide-field">
-                    <span>Populated Message Body (editable)</span>
-                    <textarea
-                      placeholder="Message content"
-                      rows={8}
-                      value={outreachForm.body}
-                      onChange={(event) => setOutreachForm((prev) => ({ ...prev, body: event.target.value }))}
-                    />
-                  </label>
-                </div>
+                      <label>
+                        <span>Select Sending Inbox</span>
+                        <select
+                          value={outreachForm.connectionId}
+                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, connectionId: event.target.value }))}
+                        >
+                          <option value="">Select connected inbox...</option>
+                          {connections.map((c) => (
+                            <option value={c.id} key={c.id}>{c.email} ({c.smtpHost})</option>
+                          ))}
+                        </select>
+                      </label>
 
-                {outreachStatusMessage && (
-                  <p className="helper-text" style={{ color: outreachStatusMessage.includes("successfully") ? "#22c55e" : "#ef4444", fontWeight: "bold" }}>
-                    {outreachStatusMessage}
-                  </p>
+                      <label style={{ gridColumn: "1 / -1" }}>
+                        <span>Select Template</span>
+                        <select
+                          value={outreachForm.templateId}
+                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, templateId: event.target.value }))}
+                        >
+                          <option value="">Select template...</option>
+                          {templates.map((t) => (
+                            <option value={t.id} key={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div style={{
+                      background: "rgba(155, 123, 58, 0.08)",
+                      border: "1px solid rgba(155, 123, 58, 0.2)",
+                      borderRadius: "8px",
+                      padding: "1.25rem",
+                      marginTop: "1.5rem",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "0.75rem"
+                    }}>
+                      <h4 style={{ margin: 0, color: "#d4af37", fontSize: "0.9rem", fontWeight: "bold" }}>👥 Bulk Outreach Queue Summary</h4>
+                      <p style={{ margin: 0, fontSize: "0.82rem", opacity: 0.9, lineHeight: "1.5" }}>
+                        Launch bulk outreach targeting all leads with email addresses in the selected campaign context.
+                      </p>
+                      <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.8rem", lineHeight: "1.6" }}>
+                        <li>Target Campaign: <strong>{selectedCampaign?.name}</strong></li>
+                        <li>Selected Template: <strong>{templates.find(t => t.id === outreachForm.templateId)?.name || "None selected"}</strong></li>
+                        <li>SMTP Connection: <strong>{connections.find(c => c.id === outreachForm.connectionId)?.email || "None selected"}</strong></li>
+                        <li>Total Recipients with Emails: <strong style={{ color: "#22c55e", fontSize: "0.9rem" }}>{campaignLeads.filter(l => l.channelIdentities?.email).length} leads</strong></li>
+                      </ul>
+                    </div>
+
+                    {bulkOutreachProgress && (
+                      <div style={{
+                        marginTop: "1rem",
+                        padding: "0.75rem",
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid var(--line)",
+                        borderRadius: "4px",
+                        fontFamily: "monospace",
+                        fontSize: "0.8rem",
+                        color: bulkOutreachProgress.includes("🎉") ? "#22c55e" : "#d4af37"
+                      }}>
+                        {bulkOutreachProgress}
+                      </div>
+                    )}
+
+                    <div className="button-row" style={{ marginTop: "1.5rem" }}>
+                      <button
+                        className="primary-action"
+                        onClick={sendBulkOutreach}
+                        disabled={
+                          isSendingBulkOutreach ||
+                          !outreachForm.connectionId ||
+                          !outreachForm.templateId ||
+                          campaignLeads.filter(l => l.channelIdentities?.email).length === 0
+                        }
+                        style={{ background: "#d4af37", color: "#000", fontWeight: "bold" }}
+                      >
+                        <Sparkles size={18} aria-hidden="true" style={{ stroke: "#000" }} />
+                        {isSendingBulkOutreach ? "Processing Bulk Queue..." : `Send Bulk Outreach (${campaignLeads.filter(l => l.channelIdentities?.email).length} Leads)`}
+                      </button>
+                    </div>
+                  </>
                 )}
-
-                <div className="button-row">
-                  <button
-                    className="primary-action"
-                    onClick={sendDirectOutreach}
-                    disabled={
-                      isSendingOutreach ||
-                      !outreachForm.leadId ||
-                      !outreachForm.connectionId ||
-                      (outreachForm.leadId === "custom" && !outreachForm.customEmail)
-                    }
-                  >
-                    <Mail size={18} aria-hidden="true" />
-                    {isSendingOutreach ? "Sending Outreach..." : "Send Email Direct"}
-                  </button>
-                </div>
               </article>
 
               <article className="panel campaign-panel">
