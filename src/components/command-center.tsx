@@ -132,6 +132,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [outreachMode, setOutreachMode] = useState<"single" | "bulk">("single");
   const [isSendingBulkOutreach, setIsSendingBulkOutreach] = useState(false);
   const [bulkOutreachProgress, setBulkOutreachProgress] = useState<string | null>(null);
+  const [bulkSendLimit, setBulkSendLimit] = useState<string>("");
 
   // Responses Inbox states
   const [mockInbox, setMockInbox] = useState([
@@ -1814,9 +1815,14 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   }
 
   async function sendBulkOutreach() {
-    const eligibleLeads = campaignLeads.filter(l => l.channelIdentities?.email);
+    // Filter out leads who have already been sent an email successfully
+    const eligibleLeads = campaignLeads.filter(l => 
+      l.channelIdentities?.email && 
+      !sentMessages.some(m => m.leadEmail === l.channelIdentities.email && m.status === 'sent')
+    );
+
     if (eligibleLeads.length === 0) {
-      setBulkOutreachProgress("Error: No leads with valid email addresses in this campaign.");
+      setBulkOutreachProgress("Error: No unsent leads with email addresses in this campaign.");
       return;
     }
     if (!outreachForm.connectionId || !outreachForm.templateId) {
@@ -1824,8 +1830,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       return;
     }
 
+    const limitVal = bulkSendLimit ? Math.max(1, parseInt(bulkSendLimit)) : eligibleLeads.length;
+    const targetLeads = eligibleLeads.slice(0, limitVal);
+
     setIsSendingBulkOutreach(true);
-    setBulkOutreachProgress(`Preparing to send ${eligibleLeads.length} emails...`);
+    setBulkOutreachProgress(`Preparing to send ${targetLeads.length} emails...`);
 
     const template = templates.find((t) => t.id === outreachForm.templateId);
     if (!template) {
@@ -1841,15 +1850,15 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     let successCount = 0;
     let failCount = 0;
 
-    for (let i = 0; i < eligibleLeads.length; i++) {
-      const lead = eligibleLeads[i];
+    for (let i = 0; i < targetLeads.length; i++) {
+      const lead = targetLeads[i];
       const toEmail = lead.channelIdentities.email!;
       const toName = lead.displayName || "there";
       const companyName = lead.companyName || lead.displayName || "your company";
       const jurisdiction = lead.jurisdiction || "your area";
 
       // Update progress state
-      setBulkOutreachProgress(`Sending ${i + 1} of ${eligibleLeads.length}: ${toName} (${toEmail})...`);
+      setBulkOutreachProgress(`Sending ${i + 1} of ${targetLeads.length}: ${toName} (${toEmail})...`);
 
       // Compile templates dynamically
       let body = template.isHtml ? (template.htmlContent || "") : template.body;
@@ -3024,12 +3033,15 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       <th style={{ padding: "0.75rem" }}>Physical Location</th>
                       <th style={{ padding: "0.75rem" }}>Source</th>
                       <th style={{ padding: "0.75rem" }}>Scores & Lane</th>
+                      <th style={{ padding: "0.75rem" }}>Sent Status</th>
                       <th style={{ padding: "0.75rem" }}>Direct Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {campaignLeads.map((lead) => {
                       const hasEmail = Boolean(lead.channelIdentities?.email);
+                      const isAlreadySent = sentMessages.some(m => m.leadEmail === lead.channelIdentities?.email && m.status === 'sent');
+
                       return (
                         <tr key={lead.id} style={{ borderBottom: "1px solid var(--line)" }}>
                           <td style={{ padding: "0.75rem" }}>
@@ -3071,10 +3083,25 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                             </span>
                           </td>
                           <td style={{ padding: "0.75rem" }}>
+                            {isAlreadySent ? (
+                              <span style={{ color: "#22c55e", fontWeight: "bold" }}>✔ Sent</span>
+                            ) : (
+                              <span style={{ opacity: 0.5 }}>Unsent</span>
+                            )}
+                          </td>
+                          <td style={{ padding: "0.75rem" }}>
                             <button
                               className="primary-action"
-                              disabled={!hasEmail}
-                              style={{ padding: "0.3rem 0.75rem", fontSize: "0.75rem", background: hasEmail ? "#22c55e" : "rgba(255,255,255,0.06)", cursor: hasEmail ? "pointer" : "not-allowed" }}
+                              disabled={!hasEmail || isAlreadySent}
+                              style={{
+                                padding: "0.3rem 0.75rem",
+                                fontSize: "0.75rem",
+                                background: isAlreadySent ? "rgba(239, 68, 68, 0.12)" : hasEmail ? "#22c55e" : "rgba(255,255,255,0.06)",
+                                color: isAlreadySent ? "#ef4444" : "#fff",
+                                border: isAlreadySent ? "1px solid rgba(239, 68, 68, 0.25)" : "none",
+                                cursor: hasEmail && !isAlreadySent ? "pointer" : "not-allowed",
+                                opacity: isAlreadySent ? 0.8 : 1
+                              }}
                               onClick={() => {
                                 if (selectedCampaign?.templateId) {
                                   updateOutreachTemplateFields(selectedCampaign.templateId, lead.id, { leadId: lead.id });
@@ -3083,9 +3110,9 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                                 }
                                 setActiveTab("outreach");
                               }}
-                              title={hasEmail ? "Compose and send email" : "Cannot send direct email without email address"}
+                              title={isAlreadySent ? "Email already successfully sent to this recipient" : hasEmail ? "Compose and send email" : "Cannot send direct email without email address"}
                             >
-                              Dispatch Email
+                              {isAlreadySent ? "Already Contacted" : "Dispatch Email"}
                             </button>
                           </td>
                         </tr>
@@ -3667,96 +3694,132 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                   </>
                 ) : (
                   <>
-                    <div className="form-grid">
-                      <label>
-                        <span>Campaign Context</span>
-                        <select value={selectedCampaignId} onChange={(event) => setSelectedCampaignId(event.target.value)}>
-                          {campaigns.map((c) => (
-                            <option value={c.id} key={c.id}>{c.name}</option>
-                          ))}
-                        </select>
-                      </label>
+                    {(() => {
+                      const totalCampaignEmails = campaignLeads.filter(l => l.channelIdentities?.email).length;
+                      const sentCampaignEmails = campaignLeads.filter(l => 
+                        l.channelIdentities?.email && 
+                        sentMessages.some(m => m.leadEmail === l.channelIdentities.email && m.status === 'sent')
+                      ).length;
+                      const unsentCampaignEmails = totalCampaignEmails - sentCampaignEmails;
+                      const currentBulkSendLimitValue = bulkSendLimit ? Math.min(unsentCampaignEmails, Math.max(1, parseInt(bulkSendLimit))) : unsentCampaignEmails;
 
-                      <label>
-                        <span>Select Sending Inbox</span>
-                        <select
-                          value={outreachForm.connectionId}
-                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, connectionId: event.target.value }))}
-                        >
-                          <option value="">Select connected inbox...</option>
-                          {connections.map((c) => (
-                            <option value={c.id} key={c.id}>{c.email} ({c.smtpHost})</option>
-                          ))}
-                        </select>
-                      </label>
+                      return (
+                        <>
+                          <div className="form-grid">
+                            <label>
+                              <span>Campaign Context</span>
+                              <select value={selectedCampaignId} onChange={(event) => {
+                                setSelectedCampaignId(event.target.value);
+                                setBulkSendLimit(""); // Reset limit when campaign changes
+                              }}>
+                                {campaigns.map((c) => (
+                                  <option value={c.id} key={c.id}>{c.name}</option>
+                                ))}
+                              </select>
+                            </label>
 
-                      <label style={{ gridColumn: "1 / -1" }}>
-                        <span>Select Template</span>
-                        <select
-                          value={outreachForm.templateId}
-                          onChange={(event) => setOutreachForm((prev) => ({ ...prev, templateId: event.target.value }))}
-                        >
-                          <option value="">Select template...</option>
-                          {templates.map((t) => (
-                            <option value={t.id} key={t.id}>{t.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
+                            <label>
+                              <span>Select Sending Inbox</span>
+                              <select
+                                value={outreachForm.connectionId}
+                                onChange={(event) => setOutreachForm((prev) => ({ ...prev, connectionId: event.target.value }))}
+                              >
+                                <option value="">Select connected inbox...</option>
+                                {connections.map((c) => (
+                                  <option value={c.id} key={c.id}>{c.email} ({c.smtpHost})</option>
+                                ))}
+                              </select>
+                            </label>
 
-                    <div style={{
-                      background: "rgba(155, 123, 58, 0.08)",
-                      border: "1px solid rgba(155, 123, 58, 0.2)",
-                      borderRadius: "8px",
-                      padding: "1.25rem",
-                      marginTop: "1.5rem",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "0.75rem"
-                    }}>
-                      <h4 style={{ margin: 0, color: "#d4af37", fontSize: "0.9rem", fontWeight: "bold" }}>👥 Bulk Outreach Queue Summary</h4>
-                      <p style={{ margin: 0, fontSize: "0.82rem", opacity: 0.9, lineHeight: "1.5" }}>
-                        Launch bulk outreach targeting all leads with email addresses in the selected campaign context.
-                      </p>
-                      <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.8rem", lineHeight: "1.6" }}>
-                        <li>Target Campaign: <strong>{selectedCampaign?.name}</strong></li>
-                        <li>Selected Template: <strong>{templates.find(t => t.id === outreachForm.templateId)?.name || "None selected"}</strong></li>
-                        <li>SMTP Connection: <strong>{connections.find(c => c.id === outreachForm.connectionId)?.email || "None selected"}</strong></li>
-                        <li>Total Recipients with Emails: <strong style={{ color: "#22c55e", fontSize: "0.9rem" }}>{campaignLeads.filter(l => l.channelIdentities?.email).length} leads</strong></li>
-                      </ul>
-                    </div>
+                            <label style={{ gridColumn: "1 / -1" }}>
+                              <span>Select Template</span>
+                              <select
+                                value={outreachForm.templateId}
+                                onChange={(event) => setOutreachForm((prev) => ({ ...prev, templateId: event.target.value }))}
+                              >
+                                <option value="">Select template...</option>
+                                {templates.map((t) => (
+                                  <option value={t.id} key={t.id}>{t.name}</option>
+                                ))}
+                              </select>
+                            </label>
 
-                    {bulkOutreachProgress && (
-                      <div style={{
-                        marginTop: "1rem",
-                        padding: "0.75rem",
-                        background: "rgba(255,255,255,0.03)",
-                        border: "1px solid var(--line)",
-                        borderRadius: "4px",
-                        fontFamily: "monospace",
-                        fontSize: "0.8rem",
-                        color: bulkOutreachProgress.includes("🎉") ? "#22c55e" : "#d4af37"
-                      }}>
-                        {bulkOutreachProgress}
-                      </div>
-                    )}
+                            <label style={{ gridColumn: "1 / -1" }}>
+                              <span>Max Emails to Send (1 - {unsentCampaignEmails})</span>
+                              <input 
+                                type="number"
+                                placeholder={`All remaining unsent leads (${unsentCampaignEmails})`}
+                                min={1}
+                                max={unsentCampaignEmails}
+                                value={bulkSendLimit}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setBulkSendLimit(val === "" ? "" : String(Math.max(1, Math.min(unsentCampaignEmails, Number(val)))));
+                                }}
+                                style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                              />
+                            </label>
+                          </div>
 
-                    <div className="button-row" style={{ marginTop: "1.5rem" }}>
-                      <button
-                        className="primary-action"
-                        onClick={sendBulkOutreach}
-                        disabled={
-                          isSendingBulkOutreach ||
-                          !outreachForm.connectionId ||
-                          !outreachForm.templateId ||
-                          campaignLeads.filter(l => l.channelIdentities?.email).length === 0
-                        }
-                        style={{ background: "#d4af37", color: "#000", fontWeight: "bold" }}
-                      >
-                        <Sparkles size={18} aria-hidden="true" style={{ stroke: "#000" }} />
-                        {isSendingBulkOutreach ? "Processing Bulk Queue..." : `Send Bulk Outreach (${campaignLeads.filter(l => l.channelIdentities?.email).length} Leads)`}
-                      </button>
-                    </div>
+                          <div style={{
+                            background: "rgba(155, 123, 58, 0.08)",
+                            border: "1px solid rgba(155, 123, 58, 0.2)",
+                            borderRadius: "8px",
+                            padding: "1.25rem",
+                            marginTop: "1.5rem",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.75rem"
+                          }}>
+                            <h4 style={{ margin: 0, color: "#d4af37", fontSize: "0.9rem", fontWeight: "bold" }}>👥 Bulk Outreach Queue Summary</h4>
+                            <p style={{ margin: 0, fontSize: "0.82rem", opacity: 0.9, lineHeight: "1.5" }}>
+                              Launch bulk outreach targeting unsent leads with email addresses in the selected campaign context.
+                            </p>
+                            <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.8rem", lineHeight: "1.6" }}>
+                              <li>Target Campaign: <strong>{selectedCampaign?.name}</strong></li>
+                              <li>Selected Template: <strong>{templates.find(t => t.id === outreachForm.templateId)?.name || "None selected"}</strong></li>
+                              <li>SMTP Connection: <strong>{connections.find(c => c.id === outreachForm.connectionId)?.email || "None selected"}</strong></li>
+                              <li>Total Campaign Emails: <strong>{totalCampaignEmails}</strong></li>
+                              <li>Already Contacted (Excluded): <strong style={{ color: "#ef4444" }}>{sentCampaignEmails} leads</strong></li>
+                              <li>Remaining Unsent Leads: <strong style={{ color: "#22c55e" }}>{unsentCampaignEmails} leads</strong></li>
+                              <li>Leads Targeted in this Batch: <strong style={{ color: "#d4af37", fontSize: "0.95rem" }}>{currentBulkSendLimitValue} leads</strong></li>
+                            </ul>
+                          </div>
+
+                          {bulkOutreachProgress && (
+                            <div style={{
+                              marginTop: "1rem",
+                              padding: "0.75rem",
+                              background: "rgba(255,255,255,0.03)",
+                              border: "1px solid var(--line)",
+                              borderRadius: "4px",
+                              fontFamily: "monospace",
+                              fontSize: "0.8rem",
+                              color: bulkOutreachProgress.includes("🎉") ? "#22c55e" : "#d4af37"
+                            }}>
+                              {bulkOutreachProgress}
+                            </div>
+                          )}
+
+                          <div className="button-row" style={{ marginTop: "1.5rem" }}>
+                            <button
+                              className="primary-action"
+                              onClick={sendBulkOutreach}
+                              disabled={
+                                isSendingBulkOutreach ||
+                                !outreachForm.connectionId ||
+                                !outreachForm.templateId ||
+                                unsentCampaignEmails === 0
+                              }
+                              style={{ background: "#d4af37", color: "#000", fontWeight: "bold" }}
+                            >
+                              <Sparkles size={18} aria-hidden="true" style={{ stroke: "#000" }} />
+                              {isSendingBulkOutreach ? "Processing Bulk Queue..." : `Send Bulk Outreach (${currentBulkSendLimitValue} Leads)`}
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </>
                 )}
               </article>
