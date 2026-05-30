@@ -286,7 +286,7 @@ export function getApifySourcePresets(): ApifySourcePreset[] {
         country: "United States",
         scrapeFrom: "All",
         emailType: "B2C",
-        engine: "Legacy",
+        engine: "legacy",
         maxEmails: 20
       },
       mapping: {

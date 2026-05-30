@@ -31,7 +31,7 @@ export const apifyDiscoverySchema = z.object({
   onlyEmails: z.boolean().optional(),
   actorId: z.string().min(1).optional(),
   actorInput: z.record(z.string(), z.unknown()).default({}),
-  maxItems: z.number().int().min(1).max(250).default(25),
+  maxItems: z.number().int().min(1).max(5000).default(25),
   timeoutSecs: z.number().int().min(10).max(300).default(120),
   mapping: z
     .object({

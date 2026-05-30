@@ -116,7 +116,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [bestCountry, setBestCountry] = useState("United States");
   const [bestScrapeFrom, setBestScrapeFrom] = useState("All");
   const [bestEmailType, setBestEmailType] = useState("B2C");
-  const [bestEngine, setBestEngine] = useState("Legacy");
+  const [bestEngine, setBestEngine] = useState("legacy");
   const [bestMaxEmails, setBestMaxEmails] = useState(20);
 
   // Responses Inbox states
@@ -2426,8 +2426,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       <label>
                         <span>Engine</span>
                         <select value={bestEngine} onChange={e => setBestEngine(e.target.value)}>
-                          <option value="Legacy">Legacy</option>
-                          <option value="Premium">Premium</option>
+                          <option value="legacy">Legacy</option>
+                          <option value="cost-effective">Premium</option>
                         </select>
                       </label>
 
@@ -4123,8 +4123,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                               onChange={e => setBestEngine(e.target.value)}
                               style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
                             >
-                              <option value="Legacy">Legacy</option>
-                              <option value="Premium">Premium</option>
+                              <option value="legacy">Legacy</option>
+                              <option value="cost-effective">Premium</option>
                             </select>
                           </label>
                           <label>
@@ -4610,7 +4610,7 @@ function buildDiscoveryPayload(
         country: bestCountry ?? "United States",
         scrapeFrom: bestScrapeFrom ?? "All",
         emailType: bestEmailType ?? "B2C",
-        engine: bestEngine ?? "Legacy",
+        engine: bestEngine ?? "legacy",
         maxEmails: finalLimit
       }
     };
