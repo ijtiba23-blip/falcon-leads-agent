@@ -273,6 +273,38 @@ export function getApifySourcePresets(): ApifySourcePreset[] {
         channel: "email",
         consentStatus: "legitimate_interest"
       }
+    },
+    {
+      key: "instagram_best_scraper",
+      label: "Best Instagram Email Scraper (Scraper-Mind)",
+      actorId: "scraper-mind/best-instagram-email-scraper",
+      riskLevel: "medium",
+      recommendedUse: "Extract B2C/B2B emails based on target keywords and country selections.",
+      notFor: "Do not crawl private accounts without clear purpose.",
+      defaultActorInput: {
+        keywords: ["fitness", "gym", "workout"],
+        country: "United States",
+        scrapeFrom: "All",
+        emailType: "B2C",
+        engine: "Legacy",
+        maxEmails: 20
+      },
+      mapping: {
+        displayName: "username",
+        companyName: "fullName",
+        email: "email",
+        sourceUrl: "profileUrl",
+        segment: "biography"
+      },
+      defaults: {
+        leadType: "b2c_profile",
+        lane: "high_risk_cold_social",
+        jurisdiction: "US",
+        segment: "Instagram Scraper-Mind lead",
+        sourceType: "apify_instagram_best_scraper",
+        channel: "email",
+        consentStatus: "unknown"
+      }
     }
   ];
 }

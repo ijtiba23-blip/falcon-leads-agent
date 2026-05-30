@@ -111,6 +111,14 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [wizardStatus, setWizardStatus] = useState<string | null>(null);
   const [wizardLog, setWizardLog] = useState<string[]>([]);
 
+  // Custom states for scraper-mind/best-instagram-email-scraper
+  const [bestKeywords, setBestKeywords] = useState("fitness\ngym\nworkout");
+  const [bestCountry, setBestCountry] = useState("United States");
+  const [bestScrapeFrom, setBestScrapeFrom] = useState("All");
+  const [bestEmailType, setBestEmailType] = useState("B2C");
+  const [bestEngine, setBestEngine] = useState("Legacy");
+  const [bestMaxEmails, setBestMaxEmails] = useState(20);
+
   // Responses Inbox states
   const [mockInbox, setMockInbox] = useState([
     {
@@ -661,25 +669,91 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       // Scale limits to ensure enough business contacts/emails are found
       const crawlLimit = Math.max(wizardForm.leadLimit * 4, 150);
 
-      // 2. Run Apify Scraper to extract leads dynamically
-      const discoveryPayload = {
-        campaignId: newCampaign.id,
-        sourceKey: wizardForm.sourceKey,
-        maxItems: wizardForm.leadLimit,
-        actorInput: {
-          ...(preset?.defaultActorInput ?? {}),
-          searchStringsArray: wizardForm.keywords.split("\n").map(k => k.trim()).filter(Boolean),
+      // Compile dynamic inputs based on selected scraper source
+      const keywordsList = wizardForm.keywords.split("\n").map(k => k.trim()).filter(Boolean);
+      let customActorInput: Record<string, any> = {};
+
+      if (wizardForm.sourceKey === "google_maps") {
+        customActorInput = {
+          searchStringsArray: keywordsList,
           locationQuery: wizardForm.location,
           maxCrawledPlacesPerSearch: crawlLimit,
-          maxItems: crawlLimit,
-          resultsLimit: crawlLimit,
-          maxResults: crawlLimit,
-          maxCrawledPlaces: crawlLimit,
           skipClosedPlaces: true,
           scrapeReviewsPersonalData: false,
           scrapePlaceDetailPage: true,
           scrapeContacts: true,
           website: "allPlaces"
+        };
+      } else if (wizardForm.sourceKey === "google_search") {
+        // Construct search queries combining each keyword with the location
+        const queries = keywordsList.map(k => `${k} ${wizardForm.location}`).join("\n");
+        customActorInput = {
+          queries,
+          maxPagesPerQuery: 2
+        };
+      } else if (wizardForm.sourceKey === "instagram_profile") {
+        // Construct highly accurate Google Search queries to extract Instagram profiles with public emails
+        const queries = keywordsList.map(k => `site:instagram.com "${k}" "${wizardForm.location}" "@gmail.com" OR "@yahoo.com" OR "email"`).join("\n");
+        customActorInput = {
+          queries,
+          maxPagesPerQuery: 3, // Check up to 3 pages per query to find more candidates!
+          maxConcurrency: 10
+        };
+      } else if (wizardForm.sourceKey === "tiktok_profile") {
+        // Construct highly accurate Google Search queries to extract TikTok profiles with public emails
+        const queries = keywordsList.map(k => `site:tiktok.com "${k}" "${wizardForm.location}" "@gmail.com" OR "@yahoo.com" OR "email"`).join("\n");
+        customActorInput = {
+          queries,
+          maxPagesPerQuery: 3,
+          maxConcurrency: 10
+        };
+      } else if (wizardForm.sourceKey === "facebook_pages") {
+        customActorInput = {
+          startUrls: keywordsList.map(k => ({
+            url: `https://www.facebook.com/search/pages/?q=${encodeURIComponent(k + " " + wizardForm.location)}`
+          })),
+          maxResults: crawlLimit
+        };
+      } else if (wizardForm.sourceKey === "instagram") {
+        customActorInput = {
+          directUrls: keywordsList.map(k => `https://www.instagram.com/explore/tags/${k.replace(/\s+/g, "").toLowerCase()}/`),
+          resultsType: "posts",
+          resultsLimit: crawlLimit
+        };
+      } else if (wizardForm.sourceKey === "instagram_best_scraper") {
+        customActorInput = {
+          keywords: bestKeywords.split("\n").map(k => k.trim()).filter(Boolean),
+          country: bestCountry,
+          scrapeFrom: bestScrapeFrom,
+          emailType: bestEmailType,
+          engine: bestEngine,
+          maxEmails: bestMaxEmails
+        };
+      } else {
+        // Default fallback
+        customActorInput = {
+          searchStringsArray: keywordsList,
+          locationQuery: wizardForm.location
+        };
+      }
+
+      // 2. Run Apify Scraper to extract leads dynamically
+      const isBestScraper = wizardForm.sourceKey === "instagram_best_scraper";
+      const finalMaxItems = isBestScraper ? bestMaxEmails : wizardForm.leadLimit;
+      const finalCrawlLimit = isBestScraper ? bestMaxEmails : crawlLimit;
+
+      const discoveryPayload = {
+        campaignId: newCampaign.id,
+        sourceKey: wizardForm.sourceKey,
+        maxItems: finalMaxItems,
+        actorInput: {
+          ...(preset?.defaultActorInput ?? {}),
+          ...customActorInput,
+          // Guarantee limits across all scraper variables
+          maxItems: finalCrawlLimit,
+          resultsLimit: finalCrawlLimit,
+          maxResults: finalCrawlLimit,
+          maxCrawledPlaces: finalCrawlLimit
         },
         onlyEmails: true
       };
@@ -1017,7 +1091,19 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...buildDiscoveryPayload(selectedCampaign.id, sourceKey, locationQuery, searchTerms, leadLimit),
+          ...buildDiscoveryPayload(
+            selectedCampaign.id, 
+            sourceKey, 
+            locationQuery, 
+            searchTerms, 
+            leadLimit,
+            bestKeywords,
+            bestCountry,
+            bestScrapeFrom,
+            bestEmailType,
+            bestEngine,
+            bestMaxEmails
+          ),
           onlyEmails
         })
       });
@@ -2014,62 +2100,126 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                 <select value={sourceKey} onChange={(event) => setSourceKey(event.target.value as ApifySourceKey)}>
                   <option value="google_maps">Google Maps Scraper (with Emails)</option>
                   <option value="google_search">Google Search Scraper</option>
-                  <option value="website_contacts">Website Email & Contact Extractor</option>
                   <option value="instagram_profile">Instagram Profile Email Extractor</option>
-                  <option value="tiktok_profile">TikTok Profile Email Extractor</option>
-                  <option value="facebook_pages">Facebook Pages Email Extractor</option>
                   <option value="instagram">Instagram Hashtag research</option>
-                  <option value="tiktok">TikTok Video keyword research</option>
+                  <option value="instagram_best_scraper">Best Instagram Email Scraper (Scraper-Mind)</option>
                 </select>
               </label>
-              <label>
-                <span>Lead limit</span>
-                <input
-                  min={1}
-                  max={250}
-                  type="number"
-                  value={leadLimit}
-                  onChange={(event) => setLeadLimit(Number(event.target.value))}
-                />
-              </label>
-
-              {sourceKey !== "website_contacts" && (
-                <label className="wide-field">
-                  <span>Location / Country</span>
-                  <input 
-                    value={locationQuery} 
-                    onChange={(event) => setLocationQuery(event.target.value)} 
-                    placeholder="e.g. London, United Kingdom or Austin, TX"
+              {sourceKey !== "instagram_best_scraper" && (
+                <label>
+                  <span>Lead limit</span>
+                  <input
+                    min={1}
+                    max={250}
+                    type="number"
+                    value={leadLimit}
+                    onChange={(event) => setLeadLimit(Number(event.target.value))}
                   />
                 </label>
               )}
 
-              <label className="wide-field">
-                <span>{sourceKey === "website_contacts" ? "Website domains / URLs" : "Search categories / keywords"}</span>
-                <textarea
-                  value={searchTerms}
-                  onChange={(event) => setSearchTerms(event.target.value)}
-                  rows={4}
-                  placeholder={
-                    sourceKey === "website_contacts"
-                      ? "Enter website domains/URLs (one per line)\ne.g.\nmodestangel.co.uk\nalmanaar.co.uk"
-                      : "Enter search keywords (one per line)\ne.g.\nIslamic clothing store\nmodest boutique\nabaya store"
-                  }
-                />
-              </label>
+              {sourceKey === "instagram_best_scraper" ? (
+                <>
+                  <label className="wide-field">
+                    <span>Keywords (required)</span>
+                    <textarea 
+                      value={bestKeywords} 
+                      onChange={e => setBestKeywords(e.target.value)}
+                      rows={3}
+                      placeholder="fitness&#10;gym&#10;workout"
+                    />
+                  </label>
 
-              {/* Only Emails switch checkbox */}
-              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", gridColumn: "1 / -1", cursor: "pointer", marginTop: "0.5rem" }}>
-                <input
-                  type="checkbox"
-                  checked={onlyEmails}
-                  onChange={(event) => setOnlyEmails(event.target.checked)}
-                  style={{ width: "auto", height: "auto", cursor: "pointer" }}
-                />
-                <span style={{ fontSize: "0.85rem", textTransform: "none", color: "var(--ink)", fontWeight: 500 }}>
-                  Only extract/import leads with email addresses
-                </span>
-              </label>
+                  <label className="wide-field">
+                    <span>Country</span>
+                    <select value={bestCountry} onChange={e => setBestCountry(e.target.value)}>
+                      <option value="United States">United States</option>
+                      <option value="United Kingdom">United Kingdom</option>
+                      <option value="Canada">Canada</option>
+                      <option value="Australia">Australia</option>
+                      <option value="Germany">Germany</option>
+                      <option value="United Arab Emirates">United Arab Emirates</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Scrape From</span>
+                    <select value={bestScrapeFrom} onChange={e => setBestScrapeFrom(e.target.value)}>
+                      <option value="All">All</option>
+                      <option value="Bio Only">Bio Only</option>
+                      <option value="Posts Only">Posts Only</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Email Type</span>
+                    <select value={bestEmailType} onChange={e => setBestEmailType(e.target.value)}>
+                      <option value="B2C">B2C</option>
+                      <option value="B2B">B2B</option>
+                      <option value="Both">Both</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Engine</span>
+                    <select value={bestEngine} onChange={e => setBestEngine(e.target.value)}>
+                      <option value="Legacy">Legacy</option>
+                      <option value="Premium">Premium</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Max Emails</span>
+                    <input 
+                      type="number" 
+                      min={1} 
+                      max={100}
+                      value={bestMaxEmails} 
+                      onChange={e => setBestMaxEmails(Math.max(1, Number(e.target.value)))}
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  {sourceKey !== "website_contacts" && (
+                    <label className="wide-field">
+                      <span>Location / Country</span>
+                      <input 
+                        value={locationQuery} 
+                        onChange={(event) => setLocationQuery(event.target.value)} 
+                        placeholder="e.g. London, United Kingdom or Austin, TX"
+                      />
+                    </label>
+                  )}
+
+                  <label className="wide-field">
+                    <span>{sourceKey === "website_contacts" ? "Website domains / URLs" : "Search categories / keywords"}</span>
+                    <textarea
+                      value={searchTerms}
+                      onChange={(event) => setSearchTerms(event.target.value)}
+                      rows={4}
+                      placeholder={
+                        sourceKey === "website_contacts"
+                          ? "Enter website domains/URLs (one per line)\ne.g.\nmodestangel.co.uk\nalmanaar.co.uk"
+                          : "Enter search keywords (one per line)\ne.g.\nIslamic clothing store\nmodest boutique\nabaya store"
+                      }
+                    />
+                  </label>
+
+                  {/* Only Emails switch checkbox */}
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", gridColumn: "1 / -1", cursor: "pointer", marginTop: "0.5rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={onlyEmails}
+                      onChange={(event) => setOnlyEmails(event.target.checked)}
+                      style={{ width: "auto", height: "auto", cursor: "pointer" }}
+                    />
+                    <span style={{ fontSize: "0.85rem", textTransform: "none", color: "var(--ink)", fontWeight: 500 }}>
+                      Only extract/import leads with email addresses
+                    </span>
+                  </label>
+                </>
+              )}
             </div>
 
             <div className="button-row">
@@ -3521,68 +3671,177 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Platform / Scraper Source</span>
                       <select 
                         value={wizardForm.sourceKey} 
-                        onChange={e => setWizardForm(form => ({ ...form, sourceKey: e.target.value as ApifySourceKey }))}
+                        onChange={e => {
+                          const newSourceKey = e.target.value as ApifySourceKey;
+                          let defaultKeywords = wizardForm.keywords;
+                          if (newSourceKey === "google_maps") {
+                            defaultKeywords = "Islamic clothing store\nmodest fashion boutique\nabaya store\nBisht embroidery shop";
+                          } else if (newSourceKey === "google_search") {
+                            defaultKeywords = "modest fashion boutique UK\nIslamic clothing store USA\nabaya coat shop Germany";
+                          } else if (newSourceKey === "instagram_profile" || newSourceKey === "instagram") {
+                            defaultKeywords = "modestfashion\nmuslimahwear\nabayafashion\nmodestboutique";
+                          } else if (newSourceKey === "tiktok_profile" || newSourceKey === "tiktok") {
+                            defaultKeywords = "modestfashion\nmodestboutique\nabayastyle\nmuslimahfashion";
+                          } else if (newSourceKey === "facebook_pages") {
+                            defaultKeywords = "modest fashion shop\nIslamic clothing brand\nabaya designer";
+                          } else if (newSourceKey === "instagram_best_scraper") {
+                            defaultKeywords = "fitness\ngym\nworkout";
+                            setBestKeywords("fitness\ngym\nworkout");
+                          }
+                          setWizardForm(form => ({ 
+                            ...form, 
+                            sourceKey: newSourceKey,
+                            keywords: defaultKeywords
+                          }));
+                        }}
                         style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
                       >
-                        {getApifySourcePresets().map(preset => (
-                          <option value={preset.key} key={preset.key}>
-                            {preset.label} ({preset.riskLevel.toUpperCase()} RISK)
-                          </option>
-                        ))}
+                        {getApifySourcePresets()
+                          .filter(preset => ["google_maps", "google_search", "instagram_profile", "instagram", "instagram_best_scraper"].includes(preset.key))
+                          .map(preset => (
+                            <option value={preset.key} key={preset.key}>
+                              {preset.label} ({preset.riskLevel.toUpperCase()} RISK)
+                            </option>
+                          ))
+                        }
                       </select>
                       <small style={{ display: "block", opacity: 0.6, fontSize: "0.7rem", marginTop: "0.25rem", color: "#d4af37" }}>
                         {getApifySourcePreset(wizardForm.sourceKey)?.recommendedUse}
                       </small>
                     </label>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-                      <label>
-                        <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Target Location / Country</span>
-                        <select 
-                          value={wizardForm.jurisdiction} 
-                          onChange={e => setWizardForm(form => ({ ...form, jurisdiction: e.target.value }))}
-                          style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
-                        >
-                          <option value="UK">United Kingdom (UK)</option>
-                          <option value="US">United States (USA)</option>
-                          <option value="CA">Canada</option>
-                          <option value="AU">Australia</option>
-                          <option value="AE">United Arab Emirates (UAE)</option>
-                          <option value="SA">Saudi Arabia (KSA)</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Emails Limit (Dispatches count)</span>
-                        <input 
-                          type="number" 
-                          min={1} 
-                          max={250}
-                          value={wizardForm.leadLimit} 
-                          onChange={e => setWizardForm(form => ({ ...form, leadLimit: Math.max(1, Number(e.target.value)) }))}
-                          style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
-                        />
-                      </label>
-                    </div>
+                    {wizardForm.sourceKey === "instagram_best_scraper" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                        <label style={{ display: "block" }}>
+                          <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Keywords (required)</span>
+                          <textarea 
+                            value={bestKeywords} 
+                            onChange={e => setBestKeywords(e.target.value)}
+                            rows={3}
+                            placeholder="fitness&#10;gym&#10;workout"
+                            style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontFamily: "monospace", fontSize: "0.8rem", lineHeight: "1.4" }}
+                          />
+                        </label>
 
-                    <label style={{ display: "block" }}>
-                      <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Business Goal Description</span>
-                      <textarea 
-                        value={wizardForm.goal} 
-                        onChange={e => setWizardForm(form => ({ ...form, goal: e.target.value }))}
-                        rows={2}
-                        style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontSize: "0.85rem", lineHeight: "1.4" }}
-                      />
-                    </label>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Country</span>
+                            <select 
+                              value={bestCountry} 
+                              onChange={e => setBestCountry(e.target.value)}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            >
+                              <option value="United States">United States</option>
+                              <option value="United Kingdom">United Kingdom</option>
+                              <option value="Canada">Canada</option>
+                              <option value="Australia">Australia</option>
+                              <option value="Germany">Germany</option>
+                              <option value="United Arab Emirates">United Arab Emirates</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Scrape From</span>
+                            <select 
+                              value={bestScrapeFrom} 
+                              onChange={e => setBestScrapeFrom(e.target.value)}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            >
+                              <option value="All">All</option>
+                              <option value="Bio Only">Bio Only</option>
+                              <option value="Posts Only">Posts Only</option>
+                            </select>
+                          </label>
+                        </div>
 
-                    <label style={{ display: "block" }}>
-                      <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Scraper Search Keywords (one query per line)</span>
-                      <textarea 
-                        value={wizardForm.keywords} 
-                        onChange={e => setWizardForm(form => ({ ...form, keywords: e.target.value }))}
-                        rows={3}
-                        style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontFamily: "monospace", fontSize: "0.8rem", lineHeight: "1.4" }}
-                      />
-                    </label>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem" }}>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Email Type</span>
+                            <select 
+                              value={bestEmailType} 
+                              onChange={e => setBestEmailType(e.target.value)}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            >
+                              <option value="B2C">B2C</option>
+                              <option value="B2B">B2B</option>
+                              <option value="Both">Both</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Engine</span>
+                            <select 
+                              value={bestEngine} 
+                              onChange={e => setBestEngine(e.target.value)}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            >
+                              <option value="Legacy">Legacy</option>
+                              <option value="Premium">Premium</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Max Emails</span>
+                            <input 
+                              type="number" 
+                              min={1} 
+                              max={100}
+                              value={bestMaxEmails} 
+                              onChange={e => setBestMaxEmails(Math.max(1, Number(e.target.value)))}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Target Location / Country</span>
+                            <select 
+                              value={wizardForm.jurisdiction} 
+                              onChange={e => setWizardForm(form => ({ ...form, jurisdiction: e.target.value }))}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            >
+                              <option value="UK">United Kingdom (UK)</option>
+                              <option value="US">United States (USA)</option>
+                              <option value="CA">Canada</option>
+                              <option value="AU">Australia</option>
+                              <option value="AE">United Arab Emirates (UAE)</option>
+                              <option value="SA">Saudi Arabia (KSA)</option>
+                            </select>
+                          </label>
+                          <label>
+                            <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Emails Limit (Dispatches count)</span>
+                            <input 
+                              type="number" 
+                              min={1} 
+                              max={250}
+                              value={wizardForm.leadLimit} 
+                              onChange={e => setWizardForm(form => ({ ...form, leadLimit: Math.max(1, Number(e.target.value)) }))}
+                              style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff" }}
+                            />
+                          </label>
+                        </div>
+
+                        <label style={{ display: "block" }}>
+                          <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Business Goal Description</span>
+                          <textarea 
+                            value={wizardForm.goal} 
+                            onChange={e => setWizardForm(form => ({ ...form, goal: e.target.value }))}
+                            rows={2}
+                            style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontSize: "0.85rem", lineHeight: "1.4" }}
+                          />
+                        </label>
+
+                        <label style={{ display: "block" }}>
+                          <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Scraper Search Keywords (one query per line)</span>
+                          <textarea 
+                            value={wizardForm.keywords} 
+                            onChange={e => setWizardForm(form => ({ ...form, keywords: e.target.value }))}
+                            rows={3}
+                            style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontFamily: "monospace", fontSize: "0.8rem", lineHeight: "1.4" }}
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3856,7 +4115,13 @@ function buildDiscoveryPayload(
   sourceKey: ApifySourceKey,
   locationQuery: string,
   searchTerms: string,
-  leadLimit: number
+  leadLimit: number,
+  bestKeywords?: string,
+  bestCountry?: string,
+  bestScrapeFrom?: string,
+  bestEmailType?: string,
+  bestEngine?: string,
+  bestMaxEmails?: number
 ) {
   const safeLimit = Math.max(1, Math.min(250, Number.isFinite(leadLimit) ? leadLimit : 5));
   const terms = searchTerms
@@ -3980,6 +4245,23 @@ function buildDiscoveryPayload(
             )
           : ["https://www.instagram.com/explore/tags/modestfashion/"],
         resultsLimit: safeLimit
+      }
+    };
+  }
+
+  if (sourceKey === "instagram_best_scraper") {
+    const finalLimit = bestMaxEmails ?? 20;
+    return {
+      campaignId,
+      sourceKey,
+      maxItems: finalLimit,
+      actorInput: {
+        keywords: (bestKeywords ?? "fitness\ngym\nworkout").split("\n").map((k: string) => k.trim()).filter(Boolean),
+        country: bestCountry ?? "United States",
+        scrapeFrom: bestScrapeFrom ?? "All",
+        emailType: bestEmailType ?? "B2C",
+        engine: bestEngine ?? "Legacy",
+        maxEmails: finalLimit
       }
     };
   }

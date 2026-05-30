@@ -14,7 +14,7 @@ export type Channel = (typeof channels)[number];
 export const leadLanes = ["consented_inbound", "public_business_research", "high_risk_cold_social"] as const;
 export type LeadLane = (typeof leadLanes)[number];
 
-export const apifySourceKeys = ["google_search", "google_maps", "instagram", "tiktok", "website_contacts", "instagram_profile", "tiktok_profile", "facebook_pages"] as const;
+export const apifySourceKeys = ["google_search", "google_maps", "instagram", "tiktok", "website_contacts", "instagram_profile", "tiktok_profile", "facebook_pages", "instagram_best_scraper"] as const;
 export type ApifySourceKey = (typeof apifySourceKeys)[number];
 
 export type CampaignStatus = "draft" | "review" | "active" | "paused" | "completed";
