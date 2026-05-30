@@ -118,6 +118,17 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [bestEmailType, setBestEmailType] = useState("B2C");
   const [bestEngine, setBestEngine] = useState("legacy");
   const [bestMaxEmails, setBestMaxEmails] = useState(20);
+  const [activeApifyRun, setActiveApifyRun] = useState<{
+    runId: string;
+    datasetId: string;
+    campaignId: string;
+    sourceKey: string;
+    maxItems: number;
+    onlyEmails: boolean;
+    mapping: any;
+    inboxId?: string;
+    templateId?: string;
+  } | null>(null);
 
   // Responses Inbox states
   const [mockInbox, setMockInbox] = useState([
@@ -737,7 +748,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
         };
       }
 
-      // 2. Run Apify Scraper to extract leads dynamically
+      // 2. Run Apify Scraper to extract leads dynamically in the background (Async Mode)
       const isBestScraper = wizardForm.sourceKey === "instagram_best_scraper";
       const finalMaxItems = isBestScraper ? bestMaxEmails : wizardForm.leadLimit;
       const finalCrawlLimit = isBestScraper ? bestMaxEmails : crawlLimit;
@@ -755,7 +766,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
           maxResults: finalCrawlLimit,
           maxCrawledPlaces: finalCrawlLimit
         },
-        onlyEmails: true
+        onlyEmails: true,
+        runAsync: true
       };
 
       const discoveryRes = await fetch("/api/discovery/apify", {
@@ -765,31 +777,33 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       });
 
       const discoveryData = await discoveryRes.json();
-      if (!discoveryRes.ok || !discoveryData.discovery) {
-        throw new Error(discoveryData.error ?? "Apify Lead Scraper failed.");
+      if (!discoveryRes.ok || discoveryData.status !== "RUNNING") {
+        throw new Error(discoveryData.error ?? "Apify Lead Scraper failed to start in background.");
       }
 
-      const extracted = discoveryData.discovery.importedLeads as LeadRecord[];
-      setLeads(prev => [...extracted, ...prev]);
+      const runDetails = {
+        runId: discoveryData.runId,
+        datasetId: discoveryData.datasetId,
+        campaignId: newCampaign.id,
+        sourceKey: wizardForm.sourceKey,
+        maxItems: finalMaxItems,
+        onlyEmails: true,
+        mapping: preset?.mapping || {},
+        inboxId: wizardForm.inboxId,
+        templateId: wizardForm.templateId
+      };
 
+      setActiveApifyRun(runDetails);
+      setWizardStatus("Triggered Apify actor run in background...");
       setWizardLog(prev => [
         ...prev,
-        `Apify actor execution successful. Extracted ${discoveryData.discovery.rawItemCount} raw records.`
+        `✔ Apify actor trigger successful. Run ID: ${discoveryData.runId}. Started background execution on Apify servers.`
       ]);
-
-      // 3. Immediately dispatch automated emails to the extracted candidates (NO TIMERS)
-      await triggerAutomatedCampaignOutreach(
-        newCampaign.id,
-        extracted,
-        wizardForm.inboxId,
-        wizardForm.templateId
-      );
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Campaign run failed";
       setWizardStatus(`Error: ${msg}`);
       setWizardLog(prev => [...prev, `FATAL: ${msg}`]);
-    } finally {
       setIsWizardRunning(false);
     }
   };
@@ -924,7 +938,133 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     };
 
     syncDatabase();
+
+    // Restore active Apify run and dashboard logs
+    const savedActiveRun = localStorage.getItem("falcon_active_apify_run");
+    if (savedActiveRun) {
+      try {
+        const parsed = JSON.parse(savedActiveRun);
+        if (parsed && parsed.runId) {
+          setActiveApifyRun(parsed);
+          setIsWizardRunning(true);
+          
+          const savedStatus = localStorage.getItem("falcon_wizard_status");
+          if (savedStatus) setWizardStatus(JSON.parse(savedStatus));
+          
+          const savedLog = localStorage.getItem("falcon_wizard_log");
+          if (savedLog) setWizardLog(JSON.parse(savedLog));
+        }
+      } catch (e) {
+        console.error("Failed to restore active Apify run:", e);
+      }
+    }
   }, [initialData.emailConnections, initialData.emailTemplates]);
+
+  // Polling active Apify run state
+  useEffect(() => {
+    if (!activeApifyRun) return;
+
+    // Backup to localStorage when activeApifyRun changes
+    localStorage.setItem("falcon_active_apify_run", JSON.stringify(activeApifyRun));
+
+    let isMounted = true;
+    let pollInterval: NodeJS.Timeout;
+
+    const pollStatus = async () => {
+      try {
+        const res = await fetch("/api/discovery/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(activeApifyRun)
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (!isMounted) return;
+
+        if (data.status === "COMPLETED") {
+          clearInterval(pollInterval);
+          setActiveApifyRun(null);
+          localStorage.removeItem("falcon_active_apify_run");
+          localStorage.removeItem("falcon_wizard_status");
+          localStorage.removeItem("falcon_wizard_log");
+
+          const extracted = data.discovery.importedLeads;
+          setLeads(prev => [...extracted, ...prev]);
+
+          setWizardStatus("Completing outreach...");
+          setWizardLog(prev => {
+            const next = [
+              ...prev,
+              `✔ Apify actor execution successful. Extracted ${data.discovery.rawItemCount} raw records.`
+            ];
+            localStorage.setItem("falcon_wizard_log", JSON.stringify(next));
+            return next;
+          });
+
+          // Trigger automated campaign outreach
+          await triggerAutomatedCampaignOutreach(
+            activeApifyRun.campaignId,
+            extracted,
+            activeApifyRun.inboxId || "",
+            activeApifyRun.templateId || ""
+          );
+
+          setIsWizardRunning(false);
+
+        } else if (data.status === "FAILED") {
+          clearInterval(pollInterval);
+          setActiveApifyRun(null);
+          localStorage.removeItem("falcon_active_apify_run");
+          localStorage.removeItem("falcon_wizard_status");
+          localStorage.removeItem("falcon_wizard_log");
+
+          setWizardStatus(`Error: Apify run failed`);
+          setWizardLog(prev => {
+            const next = [...prev, `❌ FATAL: ${data.error || "Apify run ended with failure"}`];
+            localStorage.setItem("falcon_wizard_log", JSON.stringify(next));
+            return next;
+          });
+          setIsWizardRunning(false);
+
+        } else {
+          // Still running
+          setWizardStatus("Running Apify scraper (crawling in progress)...");
+          setWizardLog(prev => {
+            // Only add log once to prevent spamming
+            if (prev[prev.length - 1] !== "Crawling target records on Apify servers...") {
+              const next = [...prev, "Crawling target records on Apify servers..."];
+              localStorage.setItem("falcon_wizard_log", JSON.stringify(next));
+              return next;
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error("Error polling Apify run status:", err);
+      }
+    };
+
+    // Run poll immediately on mount/update, then every 5 seconds
+    pollStatus();
+    pollInterval = setInterval(pollStatus, 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [activeApifyRun]);
+
+  // Synchronize wizardStatus & wizardLog updates to localStorage
+  useEffect(() => {
+    if (isWizardRunning) {
+      localStorage.setItem("falcon_wizard_status", JSON.stringify(wizardStatus));
+      localStorage.setItem("falcon_wizard_log", JSON.stringify(wizardLog));
+    }
+  }, [wizardStatus, wizardLog, isWizardRunning]);
 
   const [isConnectingEmail, setIsConnectingEmail] = useState(false);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);

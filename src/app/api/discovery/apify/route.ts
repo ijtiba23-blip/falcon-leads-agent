@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveApifyDiscoveryRequest } from "@/lib/apify-presets";
-import { discoverLeadsWithApify } from "@/lib/storage";
+import { discoverLeadsWithApify, startLeadsDiscoveryWithApify } from "@/lib/storage";
 import { apifyDiscoverySchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
@@ -15,8 +15,21 @@ export async function POST(request: Request) {
   }
 
   try {
+    const resolvedRequest = resolveApifyDiscoveryRequest(parsed.data);
+
+    if (parsed.data.runAsync) {
+      const result = await startLeadsDiscoveryWithApify(resolvedRequest);
+
+      return NextResponse.json({
+        status: "RUNNING",
+        runId: result.runId,
+        datasetId: result.datasetId,
+        resolvedRequest
+      }, { status: 201 });
+    }
+
     const result = await discoverLeadsWithApify({
-      ...resolveApifyDiscoveryRequest(parsed.data),
+      ...resolvedRequest,
       onlyEmails: parsed.data.onlyEmails
     });
 

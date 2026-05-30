@@ -81,6 +81,24 @@ export async function runApifyLeadDiscovery(
   };
 }
 
+export async function startApifyLeadDiscovery(
+  request: ApifyDiscoveryRequest
+): Promise<{ runId: string; datasetId: string }> {
+  const token = process.env.APIFY_TOKEN;
+
+  if (!token) {
+    throw new Error("APIFY_TOKEN is missing. Add it to .env.local before running real discovery.");
+  }
+
+  const client = new ApifyClient({ token });
+  const run = await client.actor(request.actorId).start(request.actorInput);
+
+  return {
+    runId: run.id,
+    datasetId: run.defaultDatasetId || ""
+  };
+}
+
 export function normalizeApifyItemToLead(
   item: ApifyDatasetItem,
   request: ApifyDiscoveryRequest,
@@ -279,4 +297,26 @@ function scoreRisk(request: ApifyDiscoveryRequest) {
   const consentRisk = request.defaults.consentStatus === "unknown" ? 22 : 0;
 
   return Math.min(98, laneRisk + consentRisk);
+}
+
+export async function checkApifyLeadDiscoveryStatus(
+  runId: string
+): Promise<{ status: string; datasetId?: string }> {
+  const token = process.env.APIFY_TOKEN;
+
+  if (!token) {
+    throw new Error("APIFY_TOKEN is missing.");
+  }
+
+  const client = new ApifyClient({ token });
+  const run = await client.run(runId).get();
+
+  if (!run) {
+    throw new Error(`Run ${runId} not found.`);
+  }
+
+  return {
+    status: run.status,
+    datasetId: run.defaultDatasetId
+  };
 }

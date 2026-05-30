@@ -29,6 +29,7 @@ export const apifyDiscoverySchema = z.object({
   campaignId: z.string().min(1),
   sourceKey: z.enum(apifySourceKeys).optional(),
   onlyEmails: z.boolean().optional(),
+  runAsync: z.boolean().optional(),
   actorId: z.string().min(1).optional(),
   actorInput: z.record(z.string(), z.unknown()).default({}),
   maxItems: z.number().int().min(1).max(5000).default(25),

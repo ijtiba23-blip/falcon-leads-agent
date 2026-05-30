@@ -9,8 +9,9 @@ import {
   roadmap,
   tools
 } from "./mock-data";
+import { ApifyClient } from "apify-client";
 import { runAutonomySimulation } from "./agent-runtime";
-import { runApifyLeadDiscovery } from "./apify-discovery";
+import { runApifyLeadDiscovery, startApifyLeadDiscovery, normalizeApifyItemToLead } from "./apify-discovery";
 import type {
   AgentRunResult,
   ApifyDiscoveryRequest,
@@ -302,6 +303,79 @@ export async function discoverLeadsWithApify(request: ApifyDiscoveryRequest & { 
 
   return {
     ...result,
+    importedLeads: slicedLeads
+  };
+}
+
+export async function startLeadsDiscoveryWithApify(request: ApifyDiscoveryRequest) {
+  db = loadDb();
+  const campaign = db.campaigns.find((item) => item.id === request.campaignId);
+
+  if (!campaign) {
+    throw new Error("Campaign not found");
+  }
+
+  if (!request.actorId) {
+    throw new Error("Apify actorId is required.");
+  }
+
+  const { runId, datasetId } = await startApifyLeadDiscovery(request);
+  return { runId, datasetId };
+}
+
+export async function importApifyDiscoveryResults(
+  request: ApifyDiscoveryRequest & { onlyEmails?: boolean },
+  datasetId: string,
+  runId: string
+) {
+  db = loadDb();
+  const campaign = db.campaigns.find((item) => item.id === request.campaignId);
+  if (!campaign) {
+    throw new Error("Campaign not found");
+  }
+
+  const token = process.env.APIFY_TOKEN;
+  if (!token) {
+    throw new Error("APIFY_TOKEN is missing.");
+  }
+
+  const client = new ApifyClient({ token });
+  const datasetLimit = request.onlyEmails ? Math.max(request.maxItems * 10, 300) : request.maxItems;
+
+  const { items } = await client.dataset<Record<string, unknown>>(datasetId).listItems({
+    clean: true,
+    limit: datasetLimit
+  });
+
+  const importedLeads = items.map((item) => normalizeApifyItemToLead(item, request, campaign));
+
+  // Dynamically align lead type and outreach lane with campaign type
+  if (campaign.type === "b2c") {
+    importedLeads.forEach((lead) => {
+      lead.type = "b2c_profile";
+      lead.lane = "high_risk_cold_social";
+    });
+  } else if (campaign.type === "b2b") {
+    importedLeads.forEach((lead) => {
+      lead.type = "b2b_contact";
+      lead.lane = "public_business_research";
+    });
+  }
+
+  const filteredLeads = request.onlyEmails
+    ? importedLeads.filter((lead) => Boolean(lead.channelIdentities?.email))
+    : importedLeads;
+
+  const slicedLeads = filteredLeads.slice(0, request.maxItems);
+
+  db.leads.unshift(...slicedLeads);
+  saveDb(db);
+
+  return {
+    actorId: request.actorId,
+    runId,
+    datasetId,
+    rawItemCount: items.length,
     importedLeads: slicedLeads
   };
 }
