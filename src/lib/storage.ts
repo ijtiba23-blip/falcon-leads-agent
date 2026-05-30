@@ -306,6 +306,17 @@ export async function discoverLeadsWithApify(request: ApifyDiscoveryRequest & { 
   };
 }
 
+export function importManualLeads(campaignId: string, manualLeads: LeadRecord[]) {
+  db = loadDb();
+  const campaign = db.campaigns.find((item) => item.id === campaignId);
+  if (!campaign) {
+    throw new Error("Campaign not found");
+  }
+  db.leads.unshift(...manualLeads);
+  saveDb(db);
+  return manualLeads;
+}
+
 export function listEmailConnections() {
   db = loadDb();
   return db.emailConnections;

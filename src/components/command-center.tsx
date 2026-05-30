@@ -976,6 +976,10 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [searchTerms, setSearchTerms] = useState("Islamic clothing store\nmodest fashion boutique\nabaya store");
   const [leadLimit, setLeadLimit] = useState(5);
   const [onlyEmails, setOnlyEmails] = useState(true);
+  const [discoveryTab, setDiscoveryTab] = useState<'apify' | 'manual'>('apify');
+  const [manualPasteText, setManualPasteText] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
   const [campaignForm, setCampaignForm] = useState({
     name: "Modest Long Coat Outreach",
     type: "b2b" as CampaignType,
@@ -1123,6 +1127,132 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       setDiscoveryMessage(error instanceof Error ? error.message : "Apify discovery failed");
     } finally {
       setIsDiscovering(false);
+    }
+  }
+
+  async function handleManualImport() {
+    if (!selectedCampaign) {
+      setImportMessage("Select a campaign first.");
+      return;
+    }
+
+    if (!manualPasteText.trim()) {
+      setImportMessage("Please paste some lead data first.");
+      return;
+    }
+
+    setIsImporting(true);
+    setImportMessage(null);
+
+    try {
+      const lines = manualPasteText.split("\n").map(l => l.trim()).filter(Boolean);
+      const parsedLeads: LeadRecord[] = [];
+
+      for (const line of lines) {
+        // Skip header line if present
+        if (line.toLowerCase().includes("email") && (line.toLowerCase().includes("name") || line.toLowerCase().includes("company"))) {
+          continue;
+        }
+
+        // Support comma, tab, or semicolon separated columns
+        let parts: string[] = [];
+        if (line.includes("\t")) {
+          parts = line.split("\t");
+        } else if (line.includes(";")) {
+          parts = line.split(";");
+        } else {
+          parts = line.split(",");
+        }
+
+        parts = parts.map(p => p.trim());
+
+        let displayName = "";
+        let email = "";
+        let companyName = "";
+        let jurisdiction = selectedCampaign.jurisdictions?.[0] || "US";
+
+        if (parts.length === 1) {
+          // Just email address
+          email = parts[0];
+          displayName = email.split("@")[0] || "Manual Lead";
+          companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+        } else if (parts.length === 2) {
+          // name, email
+          displayName = parts[0];
+          email = parts[1];
+          companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+        } else if (parts.length === 3) {
+          // name, email, company
+          displayName = parts[0];
+          email = parts[1];
+          companyName = parts[2];
+        } else if (parts.length >= 4) {
+          // name, email, company, jurisdiction
+          displayName = parts[0];
+          email = parts[1];
+          companyName = parts[2];
+          jurisdiction = parts[3];
+        }
+
+        // Quick basic email validation regex
+        if (!email || !email.includes("@")) {
+          continue;
+        }
+
+        const newLead: LeadRecord = {
+          id: `lead_${Math.random().toString(36).substring(2, 11)}`,
+          agencyId: selectedCampaign.agencyId,
+          clientId: selectedCampaign.clientId,
+          campaignId: selectedCampaign.id,
+          displayName,
+          type: selectedCampaign.type === "b2c" ? "b2c_profile" : "b2b_contact",
+          companyName,
+          segment: "Manually Imported Lead",
+          jurisdiction,
+          sourceType: "manual_import",
+          sourceUrl: "manual_import",
+          lane: selectedCampaign.lane || "consented_inbound",
+          consentStatus: "granted",
+          optOutStatus: "clear",
+          fitScore: 100,
+          intentScore: 85,
+          riskScore: 10,
+          sensitiveCategoryFlags: [],
+          channelIdentities: {
+            email: email
+          },
+          website: email.includes("@") ? `https://${email.split("@")[1]}` : undefined,
+          status: "candidate"
+        };
+
+        parsedLeads.push(newLead);
+      }
+
+      if (parsedLeads.length === 0) {
+        throw new Error("No valid lead records containing email addresses could be parsed.");
+      }
+
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campaignId: selectedCampaign.id,
+          leads: parsedLeads
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to import leads on server");
+      }
+
+      setLeads((current) => [...parsedLeads, ...current]);
+      setImportMessage(`Successfully imported ${parsedLeads.length} leads manually!`);
+      setManualPasteText("");
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : "Failed to import leads manually");
+    } finally {
+      setIsImporting(false);
     }
   }
 
@@ -2088,151 +2218,237 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
           <article className="panel action-panel">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Run discovery</p>
-                <h2>Apify lead source</h2>
+                <p className="eyebrow">Lead Acquisition</p>
+                <h2>{discoveryTab === 'apify' ? "Apify lead source" : "Manual lead import"}</h2>
               </div>
               <Search size={20} aria-hidden="true" />
             </div>
 
-            <div className="form-grid">
-              <label>
-                <span>Source</span>
-                <select value={sourceKey} onChange={(event) => setSourceKey(event.target.value as ApifySourceKey)}>
-                  <option value="google_maps">Google Maps Scraper (with Emails)</option>
-                  <option value="google_search">Google Search Scraper</option>
-                  <option value="instagram_profile">Instagram Profile Email Extractor</option>
-                  <option value="instagram">Instagram Hashtag research</option>
-                  <option value="instagram_best_scraper">Best Instagram Email Scraper (Scraper-Mind)</option>
-                </select>
-              </label>
-              {sourceKey !== "instagram_best_scraper" && (
-                <label>
-                  <span>Lead limit</span>
-                  <input
-                    min={1}
-                    max={250}
-                    type="number"
-                    value={leadLimit}
-                    onChange={(event) => setLeadLimit(Number(event.target.value))}
-                  />
-                </label>
-              )}
+            {/* Premium Gold Accented Tabs */}
+            <div style={{ display: "flex", borderBottom: "1px solid rgba(160, 120, 60, 0.15)", marginBottom: "1.25rem", marginTop: "-0.5rem" }}>
+              <button 
+                onClick={() => setDiscoveryTab('apify')}
+                style={{
+                  flex: 1,
+                  padding: "0.6rem 1rem",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: discoveryTab === 'apify' ? "2px solid #a89060" : "2px solid transparent",
+                  color: discoveryTab === 'apify' ? "#a89060" : "var(--ink)",
+                  fontWeight: discoveryTab === 'apify' ? "600" : "500",
+                  fontSize: "0.82rem",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.03em"
+                }}
+              >
+                📡 Apify Scraper
+              </button>
+              <button 
+                onClick={() => setDiscoveryTab('manual')}
+                style={{
+                  flex: 1,
+                  padding: "0.6rem 1rem",
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: discoveryTab === 'manual' ? "2px solid #a89060" : "2px solid transparent",
+                  color: discoveryTab === 'manual' ? "#a89060" : "var(--ink)",
+                  fontWeight: discoveryTab === 'manual' ? "600" : "500",
+                  fontSize: "0.82rem",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.03em"
+                }}
+              >
+                ✍️ Manual Import
+              </button>
+            </div>
 
-              {sourceKey === "instagram_best_scraper" ? (
-                <>
-                  <label className="wide-field">
-                    <span>Keywords (required)</span>
-                    <textarea 
-                      value={bestKeywords} 
-                      onChange={e => setBestKeywords(e.target.value)}
-                      rows={3}
-                      placeholder="fitness&#10;gym&#10;workout"
-                    />
-                  </label>
-
-                  <label className="wide-field">
-                    <span>Country</span>
-                    <select value={bestCountry} onChange={e => setBestCountry(e.target.value)}>
-                      <option value="United States">United States</option>
-                      <option value="United Kingdom">United Kingdom</option>
-                      <option value="Canada">Canada</option>
-                      <option value="Australia">Australia</option>
-                      <option value="Germany">Germany</option>
-                      <option value="United Arab Emirates">United Arab Emirates</option>
+            {discoveryTab === 'apify' ? (
+              <>
+                <div className="form-grid">
+                  <label>
+                    <span>Source</span>
+                    <select value={sourceKey} onChange={(event) => setSourceKey(event.target.value as ApifySourceKey)}>
+                      <option value="google_maps">Google Maps Scraper (with Emails)</option>
+                      <option value="google_search">Google Search Scraper</option>
+                      <option value="instagram_profile">Instagram Profile Email Extractor</option>
+                      <option value="instagram">Instagram Hashtag research</option>
+                      <option value="instagram_best_scraper">Best Instagram Email Scraper (Scraper-Mind)</option>
                     </select>
                   </label>
-
-                  <label>
-                    <span>Scrape From</span>
-                    <select value={bestScrapeFrom} onChange={e => setBestScrapeFrom(e.target.value)}>
-                      <option value="All">All</option>
-                      <option value="Bio Only">Bio Only</option>
-                      <option value="Posts Only">Posts Only</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>Email Type</span>
-                    <select value={bestEmailType} onChange={e => setBestEmailType(e.target.value)}>
-                      <option value="B2C">B2C</option>
-                      <option value="B2B">B2B</option>
-                      <option value="Both">Both</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>Engine</span>
-                    <select value={bestEngine} onChange={e => setBestEngine(e.target.value)}>
-                      <option value="Legacy">Legacy</option>
-                      <option value="Premium">Premium</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    <span>Max Emails</span>
-                    <input 
-                      type="number" 
-                      min={1} 
-                      max={100}
-                      value={bestMaxEmails} 
-                      onChange={e => setBestMaxEmails(Math.max(1, Number(e.target.value)))}
-                    />
-                  </label>
-                </>
-              ) : (
-                <>
-                  {sourceKey !== "website_contacts" && (
-                    <label className="wide-field">
-                      <span>Location / Country</span>
-                      <input 
-                        value={locationQuery} 
-                        onChange={(event) => setLocationQuery(event.target.value)} 
-                        placeholder="e.g. London, United Kingdom or Austin, TX"
+                  {sourceKey !== "instagram_best_scraper" && (
+                    <label>
+                      <span>Lead limit</span>
+                      <input
+                        min={1}
+                        max={250}
+                        type="number"
+                        value={leadLimit}
+                        onChange={(event) => setLeadLimit(Number(event.target.value))}
                       />
                     </label>
                   )}
 
-                  <label className="wide-field">
-                    <span>{sourceKey === "website_contacts" ? "Website domains / URLs" : "Search categories / keywords"}</span>
-                    <textarea
-                      value={searchTerms}
-                      onChange={(event) => setSearchTerms(event.target.value)}
-                      rows={4}
-                      placeholder={
-                        sourceKey === "website_contacts"
-                          ? "Enter website domains/URLs (one per line)\ne.g.\nmodestangel.co.uk\nalmanaar.co.uk"
-                          : "Enter search keywords (one per line)\ne.g.\nIslamic clothing store\nmodest boutique\nabaya store"
-                      }
-                    />
-                  </label>
+                  {sourceKey === "instagram_best_scraper" ? (
+                    <>
+                      <label className="wide-field">
+                        <span>Keywords (required)</span>
+                        <textarea 
+                          value={bestKeywords} 
+                          onChange={e => setBestKeywords(e.target.value)}
+                          rows={3}
+                          placeholder="fitness&#10;gym&#10;workout"
+                        />
+                      </label>
 
-                  {/* Only Emails switch checkbox */}
-                  <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", gridColumn: "1 / -1", cursor: "pointer", marginTop: "0.5rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={onlyEmails}
-                      onChange={(event) => setOnlyEmails(event.target.checked)}
-                      style={{ width: "auto", height: "auto", cursor: "pointer" }}
-                    />
-                    <span style={{ fontSize: "0.85rem", textTransform: "none", color: "var(--ink)", fontWeight: 500 }}>
-                      Only extract/import leads with email addresses
-                    </span>
-                  </label>
-                </>
-              )}
-            </div>
+                      <label className="wide-field">
+                        <span>Country</span>
+                        <select value={bestCountry} onChange={e => setBestCountry(e.target.value)}>
+                          <option value="United States">United States</option>
+                          <option value="United Kingdom">United Kingdom</option>
+                          <option value="Canada">Canada</option>
+                          <option value="Australia">Australia</option>
+                          <option value="Germany">Germany</option>
+                          <option value="United Arab Emirates">United Arab Emirates</option>
+                        </select>
+                      </label>
 
-            <div className="button-row">
-              <button className="primary-action" onClick={runApifyDiscovery} disabled={isDiscovering || !selectedCampaign}>
-                <Search size={18} aria-hidden="true" />
-                {isDiscovering ? "Discovering" : "Run Apify"}
-              </button>
-              <button className="secondary-action" onClick={clearCurrentLeads} disabled={isClearing || !selectedCampaign}>
-                <Eraser size={18} aria-hidden="true" />
-                Clear leads
-              </button>
-            </div>
-            {discoveryMessage ? <p className="helper-text">{discoveryMessage}</p> : null}
+                      <label>
+                        <span>Scrape From</span>
+                        <select value={bestScrapeFrom} onChange={e => setBestScrapeFrom(e.target.value)}>
+                          <option value="All">All</option>
+                          <option value="Bio Only">Bio Only</option>
+                          <option value="Posts Only">Posts Only</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Email Type</span>
+                        <select value={bestEmailType} onChange={e => setBestEmailType(e.target.value)}>
+                          <option value="B2C">B2C</option>
+                          <option value="B2B">B2B</option>
+                          <option value="Both">Both</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Engine</span>
+                        <select value={bestEngine} onChange={e => setBestEngine(e.target.value)}>
+                          <option value="Legacy">Legacy</option>
+                          <option value="Premium">Premium</option>
+                        </select>
+                      </label>
+
+                      <label>
+                        <span>Max Emails</span>
+                        <input 
+                          type="number" 
+                          min={1} 
+                          max={100}
+                          value={bestMaxEmails} 
+                          onChange={e => setBestMaxEmails(Math.max(1, Number(e.target.value)))}
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      {sourceKey !== "website_contacts" && (
+                        <label className="wide-field">
+                          <span>Location / Country</span>
+                          <input 
+                            value={locationQuery} 
+                            onChange={(event) => setLocationQuery(event.target.value)} 
+                            placeholder="e.g. London, United Kingdom or Austin, TX"
+                          />
+                        </label>
+                      )}
+
+                      <label className="wide-field">
+                        <span>{sourceKey === "website_contacts" ? "Website domains / URLs" : "Search categories / keywords"}</span>
+                        <textarea
+                          value={searchTerms}
+                          onChange={(event) => setSearchTerms(event.target.value)}
+                          rows={4}
+                          placeholder={
+                            sourceKey === "website_contacts"
+                              ? "Enter website domains/URLs (one per line)\ne.g.\nmodestangel.co.uk\nalmanaar.co.uk"
+                              : "Enter search keywords (one per line)\ne.g.\nIslamic clothing store\nmodest boutique\nabaya store"
+                          }
+                        />
+                      </label>
+
+                      {/* Only Emails switch checkbox */}
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", gridColumn: "1 / -1", cursor: "pointer", marginTop: "0.5rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={onlyEmails}
+                          onChange={(event) => setOnlyEmails(event.target.checked)}
+                          style={{ width: "auto", height: "auto", cursor: "pointer" }}
+                        />
+                        <span style={{ fontSize: "0.85rem", textTransform: "none", color: "var(--ink)", fontWeight: 500 }}>
+                          Only extract/import leads with email addresses
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </div>
+
+                <div className="button-row" style={{ marginTop: "1rem" }}>
+                  <button className="primary-action" onClick={runApifyDiscovery} disabled={isDiscovering || !selectedCampaign}>
+                    <Search size={18} aria-hidden="true" />
+                    {isDiscovering ? "Discovering" : "Run Apify"}
+                  </button>
+                  <button className="secondary-action" onClick={clearCurrentLeads} disabled={isClearing || !selectedCampaign}>
+                    <Eraser size={18} aria-hidden="true" />
+                    Clear leads
+                  </button>
+                </div>
+                {discoveryMessage ? <p className="helper-text">{discoveryMessage}</p> : null}
+              </>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "0.25rem" }}>
+                <p style={{ fontSize: "0.8rem", color: "var(--ink)", opacity: 0.8, margin: 0, lineHeight: 1.4 }}>
+                  Directly paste clean contact records to instantly load them into the current campaign (<strong>{selectedCampaign?.name}</strong>).
+                  We support bulk pasting emails alone, or CSV-like records (comma, semicolon, or tab-separated) using any of these shapes:
+                </p>
+                <div style={{ background: "rgba(168, 144, 96, 0.05)", border: "1px solid rgba(168, 144, 96, 0.15)", borderRadius: "4px", padding: "0.6rem 0.8rem", fontSize: "0.75rem", fontFamily: "monospace", color: "#7a6230", display: "grid", gap: "0.2rem" }}>
+                  <div>• email_address</div>
+                  <div>• name, email_address</div>
+                  <div>• name, email_address, company</div>
+                  <div>• name, email_address, company, country</div>
+                </div>
+                
+                <label style={{ display: "block" }}>
+                  <span style={{ fontSize: "0.8rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "#a89060", display: "block", marginBottom: "0.35rem" }}>Paste Contacts List</span>
+                  <textarea
+                    value={manualPasteText}
+                    onChange={(e) => setManualPasteText(e.target.value)}
+                    rows={6}
+                    placeholder="Enter records here (one per line), e.g.:&#10;studiothehaya@gmail.com&#10;Fav Boutique, fav@modesty.com, Fav Modesty Wear, UK&#10;Amina K., amina@boutique.co.uk"
+                    style={{ width: "100%", padding: "0.6rem", background: "#1f2937", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "4px", color: "#fff", fontFamily: "monospace", fontSize: "0.8rem", lineHeight: "1.4" }}
+                  />
+                </label>
+
+                <div className="button-row" style={{ marginTop: "0.5rem" }}>
+                  <button className="primary-action" onClick={handleManualImport} disabled={isImporting || !selectedCampaign}>
+                    <Plus size={18} aria-hidden="true" />
+                    {isImporting ? "Importing Leads..." : "Import Leads"}
+                  </button>
+                  <button className="secondary-action" onClick={() => { setManualPasteText(""); setImportMessage(null); }} disabled={!manualPasteText}>
+                    <Eraser size={18} aria-hidden="true" />
+                    Clear input
+                  </button>
+                </div>
+                {importMessage ? (
+                  <p className="helper-text" style={{ color: importMessage.includes("Successfully") ? "#10b981" : "#ef4444", fontWeight: "600", marginTop: "0.25rem" }}>
+                    {importMessage}
+                  </p>
+                ) : null}
+              </div>
+            )}
           </article>
         </section>
 
