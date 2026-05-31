@@ -172,6 +172,67 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [isSendingInboxReply, setIsSendingInboxReply] = useState(false);
   const [inboxReplyStatus, setInboxReplyStatus] = useState<string | null>(null);
 
+  const [isSyncingInbox, setIsSyncingInbox] = useState(false);
+  const [inboxSyncError, setInboxSyncError] = useState<string | null>(null);
+
+  const syncRealInbox = async (forceConnectionId?: string) => {
+    // Determine connection ID - either forced or first available connected SMTP connection
+    let connId = forceConnectionId;
+    if (!connId) {
+      const savedConnsStr = localStorage.getItem("falcon_smtp_connections");
+      if (savedConnsStr) {
+        try {
+          const parsed = JSON.parse(savedConnsStr);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            connId = parsed[0].id;
+          }
+        } catch {}
+      }
+    }
+    if (!connId && connections.length > 0) {
+      connId = connections[0].id;
+    }
+
+    if (!connId) {
+      setInboxSyncError("Connect an inbox in SMTP & Templates first to view real messages.");
+      return;
+    }
+
+    setIsSyncingInbox(true);
+    setInboxSyncError(null);
+
+    try {
+      const res = await fetch("/api/inbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ connectionId: connId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to fetch incoming emails");
+      }
+
+      if (data.emails && Array.isArray(data.emails)) {
+        setMockInbox(data.emails);
+        // Retain selection if the selected email still exists in the synced dataset
+        if (selectedInboxEmail) {
+          const match = data.emails.find((e: any) => 
+            e.id === selectedInboxEmail.id || 
+            (e.subject === selectedInboxEmail.subject && e.leadEmail === selectedInboxEmail.leadEmail)
+          );
+          if (match) {
+            setSelectedInboxEmail(match);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("IMAP Sync Error:", err);
+      setInboxSyncError(err instanceof Error ? err.message : "SMTP/IMAP connection failed or timed out.");
+    } finally {
+      setIsSyncingInbox(false);
+    }
+  };
+
   // Sent Outreach Detail modal state
   const [viewingSentEmail, setViewingSentEmail] = useState<SentMessage | null>(null);
   const [selectedReportType, setSelectedReportType] = useState<"executive" | "geographic">("executive");
@@ -2058,8 +2119,20 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
 
           <button className={`nav-item ${activeTab === 'inbox_responses' ? 'active' : ''}`} onClick={() => {
             setActiveTab('inbox_responses');
-            // Mark all as read when opening
-            setMockInbox(prev => prev.map(m => ({ ...m, status: m.status === 'unread' ? 'read' : m.status })));
+            // Check if there are any connected SMTP credentials
+            const savedConnsStr = localStorage.getItem("falcon_smtp_connections");
+            let hasConns = connections.length > 0;
+            if (savedConnsStr) {
+              try {
+                const parsed = JSON.parse(savedConnsStr);
+                if (Array.isArray(parsed) && parsed.length > 0) hasConns = true;
+              } catch {}
+            }
+            if (hasConns) {
+              syncRealInbox();
+            } else {
+              setMockInbox(prev => prev.map(m => ({ ...m, status: m.status === 'unread' ? 'read' : m.status })));
+            }
           }}>
             <Mail size={18} aria-hidden="true" />
             Inbox (Responses)
@@ -3965,36 +4038,60 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
               <article className="panel" style={{ padding: "1rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid rgba(0,0,0,0.08)", paddingBottom: "0.5rem", flexWrap: "wrap", gap: "0.5rem" }}>
                   <h3 style={{ margin: 0, fontSize: "1rem" }}>Responses ({mockInbox.length})</h3>
-                  <button 
-                    onClick={() => {
-                      const newTestEmail = {
-                        id: "rx_test_" + Date.now(),
-                        leadName: "Test Modest Retailer",
-                        leadEmail: "test-retailer@example.com",
-                        subject: "Re: Luxury Thobe wholesale inquiry [TEST]",
-                        body: "Salaam / Hello Daroodi Team,\n\nThis is a simulated test response from a prospective lead. We saw your B2B trade thobes and are highly interested in placing an order for the upcoming festive season.\n\nCould you please send us your latest price sheet and wholesale discount terms?\n\nWarm regards,\nZainab Khan\nBoutique Manager",
-                        sentAt: new Date().toISOString(),
-                        status: "unread",
-                        replies: []
-                      };
-                      setMockInbox(prev => [newTestEmail, ...prev]);
-                      setSelectedInboxEmail(newTestEmail);
-                      console.log("Simulated and selected test email:", newTestEmail);
-                    }}
-                    style={{
-                      padding: "0.2rem 0.5rem",
-                      background: "rgba(155, 123, 58, 0.1)",
-                      border: "1px solid rgba(155, 123, 58, 0.35)",
-                      color: "#9b7b3a",
-                      fontSize: "0.7rem",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      fontWeight: "bold",
-                      transition: "all 0.2s"
-                    }}
-                  >
-                    ⚜ Receive Test Mail
-                  </button>
+                  <div style={{ display: "flex", gap: "0.35rem" }}>
+                    <button 
+                      onClick={() => syncRealInbox()}
+                      disabled={isSyncingInbox}
+                      style={{
+                        padding: "0.2rem 0.5rem",
+                        background: "rgba(155, 123, 58, 0.1)",
+                        border: "1px solid rgba(155, 123, 58, 0.35)",
+                        color: "#9b7b3a",
+                        fontSize: "0.7rem",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      {isSyncingInbox ? "Syncing..." : "🔄 Sync Inbox"}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const newTestEmail = {
+                          id: "rx_test_" + Date.now(),
+                          leadName: "Test Modest Retailer",
+                          leadEmail: "test-retailer@example.com",
+                          subject: "Re: Luxury Thobe wholesale inquiry [TEST]",
+                          body: "Salaam / Hello Daroodi Team,\n\nThis is a simulated test response from a prospective lead. We saw your B2B trade thobes and are highly interested in placing an order for the upcoming festive season.\n\nCould you please send us your latest price sheet and wholesale discount terms?\n\nWarm regards,\nZainab Khan\nBoutique Manager",
+                          sentAt: new Date().toISOString(),
+                          status: "unread",
+                          replies: []
+                        };
+                        setMockInbox(prev => [newTestEmail, ...prev]);
+                        setSelectedInboxEmail(newTestEmail);
+                        console.log("Simulated and selected test email:", newTestEmail);
+                      }}
+                      style={{
+                        padding: "0.2rem 0.5rem",
+                        background: "rgba(16, 185, 129, 0.1)",
+                        border: "1px solid rgba(16, 185, 129, 0.35)",
+                        color: "#10b981",
+                        fontSize: "0.7rem",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      ⚜ Test Mail
+                    </button>
+                  </div>
+                  {inboxSyncError && (
+                    <div style={{ width: "100%", color: "#ef4444", fontSize: "0.7rem", fontWeight: "bold", marginTop: "0.25rem" }}>
+                      ⚠️ {inboxSyncError}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                   {mockInbox.map(inboxMail => {
