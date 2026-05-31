@@ -3963,18 +3963,48 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
             <section style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: "1.5rem" }}>
               {/* Inbox Sidebar List */}
               <article className="panel" style={{ padding: "1rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid rgba(0,0,0,0.08)", paddingBottom: "0.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid rgba(0,0,0,0.08)", paddingBottom: "0.5rem", flexWrap: "wrap", gap: "0.5rem" }}>
                   <h3 style={{ margin: 0, fontSize: "1rem" }}>Responses ({mockInbox.length})</h3>
-                  <Mail size={18} style={{ color: "#9b7b3a" }} />
+                  <button 
+                    onClick={() => {
+                      const newTestEmail = {
+                        id: "rx_test_" + Date.now(),
+                        leadName: "Test Modest Retailer",
+                        leadEmail: "test-retailer@example.com",
+                        subject: "Re: Luxury Thobe wholesale inquiry [TEST]",
+                        body: "Salaam / Hello Daroodi Team,\n\nThis is a simulated test response from a prospective lead. We saw your B2B trade thobes and are highly interested in placing an order for the upcoming festive season.\n\nCould you please send us your latest price sheet and wholesale discount terms?\n\nWarm regards,\nZainab Khan\nBoutique Manager",
+                        sentAt: new Date().toISOString(),
+                        status: "unread",
+                        replies: []
+                      };
+                      setMockInbox(prev => [newTestEmail, ...prev]);
+                      setSelectedInboxEmail(newTestEmail);
+                      console.log("Simulated and selected test email:", newTestEmail);
+                    }}
+                    style={{
+                      padding: "0.2rem 0.5rem",
+                      background: "rgba(155, 123, 58, 0.1)",
+                      border: "1px solid rgba(155, 123, 58, 0.35)",
+                      color: "#9b7b3a",
+                      fontSize: "0.7rem",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontWeight: "bold",
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    ⚜ Receive Test Mail
+                  </button>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                  {mockInbox.map(email => {
-                    const isSelected = selectedInboxEmail?.id === email.id;
+                  {mockInbox.map(inboxMail => {
+                    const isSelected = selectedInboxEmail?.id === inboxMail.id;
                     return (
                       <div 
-                        key={email.id} 
+                        key={inboxMail.id} 
                         onClick={() => {
-                          setSelectedInboxEmail(email);
+                          console.log("Selecting inbox email:", inboxMail);
+                          setSelectedInboxEmail(inboxMail);
                           setInboxReplyStatus(null);
                           setInboxReply("");
                         }}
@@ -3988,17 +4018,17 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                         }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <strong style={{ fontSize: "0.85rem", color: isSelected ? "#857045" : "#151716" }}>{email.leadName}</strong>
-                          {email.status === "unread" && (
+                          <strong style={{ fontSize: "0.85rem", color: isSelected ? "#857045" : "#151716" }}>{inboxMail.leadName}</strong>
+                          {inboxMail.status === "unread" && (
                             <span style={{ background: "#ef4444", borderRadius: "50%", width: "6px", height: "6px" }}></span>
                           )}
-                          {email.status === "replied" && (
+                          {inboxMail.status === "replied" && (
                             <span style={{ fontSize: "0.6rem", background: "rgba(16, 185, 129, 0.15)", color: "#10b981", padding: "0.1rem 0.35rem", borderRadius: "10px" }}>REPLIED</span>
                           )}
                         </div>
-                        <div style={{ fontSize: "0.75rem", color: isSelected ? "#7a6a4a" : "#4b5563", margin: "0.2rem 0" }}>{email.subject}</div>
+                        <div style={{ fontSize: "0.75rem", color: isSelected ? "#7a6a4a" : "#4b5563", margin: "0.2rem 0" }}>{inboxMail.subject}</div>
                         <div style={{ fontSize: "0.75rem", color: isSelected ? "#9b7b3a" : "#9ca3af", textAlign: "right" }}>
-                          {new Date(email.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {new Date(inboxMail.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </div>
                       </div>
                     );
@@ -4075,9 +4105,44 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                     </div>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "400px", opacity: 0.5 }}>
-                    <Mail size={48} style={{ strokeWidth: 1, marginBottom: "1rem" }} />
-                    <p>Select an incoming email from the sidebar response list to view and reply.</p>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "400px" }}>
+                    <Mail size={48} style={{ strokeWidth: 1, marginBottom: "1rem", opacity: 0.4 }} />
+                    <p style={{ opacity: 0.6 }}>Select an incoming email from the sidebar response list to view and reply.</p>
+                    <div style={{ marginTop: "1.5rem", padding: "1.25rem", border: "1px dashed rgba(155, 123, 58, 0.4)", borderRadius: "8px", background: "rgba(155, 123, 58, 0.03)", textAlign: "center", maxWidth: "420px" }}>
+                      <h4 style={{ margin: "0 0 0.5rem 0", color: "#9b7b3a", fontSize: "0.95rem" }}>⚜ Test Inbox Workflow</h4>
+                      <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "0 0 1rem 0", lineHeight: "1.4" }}>
+                        Click below to instantly receive a simulated test email response from a prospective boutique lead, verify that it appears in your Responses sidebar, and automatically select it to view the live SMTP quick reply console.
+                      </p>
+                      <button 
+                        onClick={() => {
+                          const newTestEmail = {
+                            id: "rx_test_" + Date.now(),
+                            leadName: "Test Modest Retailer",
+                            leadEmail: "test-retailer@example.com",
+                            subject: "Re: Luxury Thobe wholesale inquiry [TEST]",
+                            body: "Salaam / Hello Daroodi Team,\n\nThis is a simulated test response from a prospective lead. We saw your B2B trade thobes and are highly interested in placing an order for the upcoming festive season.\n\nCould you please send us your latest price sheet and wholesale discount terms?\n\nWarm regards,\nZainab Khan\nBoutique Manager",
+                            sentAt: new Date().toISOString(),
+                            status: "unread",
+                            replies: []
+                          };
+                          setMockInbox(prev => [newTestEmail, ...prev]);
+                          setSelectedInboxEmail(newTestEmail);
+                          console.log("Simulated and selected test email from placeholder:", newTestEmail);
+                        }}
+                        className="primary-action"
+                        style={{
+                          margin: "0 auto",
+                          background: "linear-gradient(135deg, #a89060 0%, #857045 100%)",
+                          color: "#fff",
+                          border: "none",
+                          fontSize: "0.85rem",
+                          fontWeight: "bold",
+                          boxShadow: "0 4px 10px rgba(133, 112, 69, 0.25)"
+                        }}
+                      >
+                        ⚜ Send & Select Test Mail
+                      </button>
+                    </div>
                   </div>
                 )}
               </article>
