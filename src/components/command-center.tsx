@@ -91,6 +91,13 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [selectedCampaignId, setSelectedCampaignId] = useState(initialData.campaigns[0]?.id ?? "");
   const [agentRun, setAgentRun] = useState<AgentRunResult | null>(null);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+  const [leadsCurrentPage, setLeadsCurrentPage] = useState(1);
+  const [leadsPageSize, setLeadsPageSize] = useState(20);
+
+  // Reset pagination page when switching campaigns
+  useEffect(() => {
+    setLeadsCurrentPage(1);
+  }, [selectedCampaignId]);
 
   // Campaign Ads-Style Wizard states
   const [isRunCampaignModalOpen, setIsRunCampaignModalOpen] = useState(false);
@@ -1240,6 +1247,12 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     const campaignIds = campaignLeads.map(l => l.id);
     return selectedLeadIds.filter(id => campaignIds.includes(id));
   }, [selectedLeadIds, campaignLeads]);
+  const totalPages = Math.ceil(campaignLeads.length / leadsPageSize);
+  const paginatedLeads = useMemo(() => {
+    const start = (leadsCurrentPage - 1) * leadsPageSize;
+    const end = start + leadsPageSize;
+    return campaignLeads.slice(start, end);
+  }, [campaignLeads, leadsCurrentPage, leadsPageSize]);
   const metrics = selectedCampaign
     ? summarizeCampaign(selectedCampaign, leads)
     : { totalLeads: 0, approved: 0, review: 0, blocked: 0, averageFitScore: 0 };
@@ -2087,6 +2100,190 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
         body: replaceVars(body)
       };
     });
+  }
+
+
+  function renderPaginationControls(position: "top" | "bottom") {
+    if (campaignLeads.length === 0) return null;
+
+    return (
+      <div
+        className={`pagination-controls pagination-${position}`}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: position === "bottom" ? "1.25rem" : "0",
+          marginBottom: position === "top" ? "1.25rem" : "0",
+          paddingTop: position === "bottom" ? "1.25rem" : "0",
+          paddingBottom: position === "top" ? "1.25rem" : "0",
+          borderTop: position === "bottom" ? "1px solid var(--line)" : "none",
+          borderBottom: position === "top" ? "1px solid var(--line)" : "none",
+          flexWrap: "wrap",
+          gap: "1rem",
+          fontSize: "0.85rem"
+        }}
+      >
+        {/* Left: Range Info */}
+        <div style={{ opacity: 0.8 }}>
+          Showing <strong style={{ color: "#9b7b3a" }}>{Math.min(campaignLeads.length, (leadsCurrentPage - 1) * leadsPageSize + 1)}</strong> to{" "}
+          <strong style={{ color: "#9b7b3a" }}>{Math.min(campaignLeads.length, leadsCurrentPage * leadsPageSize)}</strong> of{" "}
+          <strong style={{ color: "#9b7b3a" }}>{campaignLeads.length}</strong> discovered leads
+        </div>
+
+        {/* Center: Page Controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <button
+            onClick={() => setLeadsCurrentPage(prev => Math.max(1, prev - 1))}
+            disabled={leadsCurrentPage === 1}
+            style={{
+              padding: "0.35rem 0.75rem",
+              border: "1px solid var(--line)",
+              background: "rgba(255,255,255,0.03)",
+              color: "var(--ink)",
+              borderRadius: "4px",
+              cursor: leadsCurrentPage === 1 ? "not-allowed" : "pointer",
+              opacity: leadsCurrentPage === 1 ? 0.4 : 1,
+              fontSize: "0.8rem",
+              fontWeight: "bold",
+              transition: "all 0.2s"
+            }}
+          >
+            ◀ Prev
+          </button>
+
+          {/* Display page numbers. Maximum 5 visible pages, centered around active page */}
+          {(() => {
+            const pages = [];
+            const maxVisible = 5;
+            let startPage = Math.max(1, leadsCurrentPage - Math.floor(maxVisible / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+            if (endPage - startPage + 1 < maxVisible) {
+              startPage = Math.max(1, endPage - maxVisible + 1);
+            }
+
+            // Always show page 1 + ellipsis if starting page > 2
+            if (startPage > 1) {
+              pages.push(
+                <button
+                  key={1}
+                  onClick={() => setLeadsCurrentPage(1)}
+                  style={{
+                    padding: "0.35rem 0.7rem",
+                    border: "1px solid var(--line)",
+                    background: "rgba(255,255,255,0.03)",
+                    color: "var(--ink)",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "0.8rem"
+                  }}
+                >
+                  1
+                </button>
+              );
+              if (startPage > 2) {
+                pages.push(<span key="ellipsis-start" style={{ padding: "0 0.25rem", opacity: 0.5 }}>...</span>);
+              }
+            }
+
+            for (let i = startPage; i <= endPage; i++) {
+              const isActive = i === leadsCurrentPage;
+              pages.push(
+                <button
+                  key={i}
+                  onClick={() => setLeadsCurrentPage(i)}
+                  style={{
+                    padding: "0.35rem 0.7rem",
+                    border: isActive ? "1px solid #9b7b3a" : "1px solid var(--line)",
+                    background: isActive ? "rgba(155, 123, 58, 0.15)" : "rgba(255,255,255,0.03)",
+                    color: isActive ? "#9b7b3a" : "var(--ink)",
+                    fontWeight: isActive ? "bold" : "normal",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "0.8rem"
+                  }}
+                >
+                  {i}
+                </button>
+              );
+            }
+
+            // Always show last page + ellipsis if ending page < totalPages - 1
+            if (endPage < totalPages) {
+              if (endPage < totalPages - 1) {
+                pages.push(<span key="ellipsis-end" style={{ padding: "0 0.25rem", opacity: 0.5 }}>...</span>);
+              }
+              pages.push(
+                <button
+                  key={totalPages}
+                  onClick={() => setLeadsCurrentPage(totalPages)}
+                  style={{
+                    padding: "0.35rem 0.7rem",
+                    border: "1px solid var(--line)",
+                    background: "rgba(255,255,255,0.03)",
+                    color: "var(--ink)",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "0.8rem"
+                  }}
+                >
+                  {totalPages}
+                </button>
+              );
+            }
+
+            return pages;
+          })()}
+
+          <button
+            onClick={() => setLeadsCurrentPage(prev => Math.min(totalPages, prev + 1))}
+            disabled={leadsCurrentPage === totalPages}
+            style={{
+              padding: "0.35rem 0.75rem",
+              border: "1px solid var(--line)",
+              background: "rgba(255,255,255,0.03)",
+              color: "var(--ink)",
+              borderRadius: "4px",
+              cursor: leadsCurrentPage === totalPages ? "not-allowed" : "pointer",
+              opacity: leadsCurrentPage === totalPages ? 0.4 : 1,
+              fontSize: "0.8rem",
+              fontWeight: "bold",
+              transition: "all 0.2s"
+            }}
+          >
+            Next ▶
+          </button>
+        </div>
+
+        {/* Right: View Control (Dropdown selector) */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <span style={{ opacity: 0.8 }}>Rows per page:</span>
+          <select
+            value={leadsPageSize}
+            onChange={(e) => {
+              setLeadsPageSize(Number(e.target.value));
+              setLeadsCurrentPage(1);
+            }}
+            style={{
+              padding: "0.35rem 0.5rem",
+              border: "1px solid var(--line)",
+              background: "var(--card-bg, rgba(255,255,255,0.05))",
+              color: "var(--ink)",
+              borderRadius: "4px",
+              cursor: "pointer",
+              outline: "none",
+              fontSize: "0.8rem"
+            }}
+          >
+            <option value="10" style={{ background: "#1a1a1a", color: "#fff" }}>10</option>
+            <option value="20" style={{ background: "#1a1a1a", color: "#fff" }}>20</option>
+            <option value="50" style={{ background: "#1a1a1a", color: "#fff" }}>50</option>
+            <option value="100" style={{ background: "#1a1a1a", color: "#fff" }}>100</option>
+          </select>
+        </div>
+      </div>
+    );
   }
 
 
@@ -3155,6 +3352,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                 </div>
               </div>
 
+              {renderPaginationControls("top")}
+
               <div className="lead-table" role="table" aria-label="Extracted Leads" style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", color: "var(--ink)", fontSize: "0.85rem" }}>
                   <thead>
@@ -3162,14 +3361,14 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       <th style={{ padding: "0.75rem", width: "40px" }}>
                         <input
                           type="checkbox"
-                          checked={campaignLeads.length > 0 && campaignLeads.every(l => selectedLeadIds.includes(l.id))}
+                          checked={paginatedLeads.length > 0 && paginatedLeads.every(l => selectedLeadIds.includes(l.id))}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              const allIds = campaignLeads.map(l => l.id);
-                              setSelectedLeadIds(prev => Array.from(new Set([...prev, ...allIds])));
+                              const pageIds = paginatedLeads.map(l => l.id);
+                              setSelectedLeadIds(prev => Array.from(new Set([...prev, ...pageIds])));
                             } else {
-                              const campaignIds = campaignLeads.map(l => l.id);
-                              setSelectedLeadIds(prev => prev.filter(id => !campaignIds.includes(id)));
+                              const pageIds = paginatedLeads.map(l => l.id);
+                              setSelectedLeadIds(prev => prev.filter(id => !pageIds.includes(id)));
                             }
                           }}
                           style={{ cursor: "pointer", width: "16px", height: "16px" }}
@@ -3185,7 +3384,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {campaignLeads.map((lead) => {
+                    {paginatedLeads.map((lead) => {
                       const hasEmail = Boolean(lead.channelIdentities?.email);
                       const isAlreadySent = sentMessages.some(m => m.leadEmail === lead.channelIdentities?.email && m.status === 'sent');
 
@@ -3314,6 +3513,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                   </div>
                 )}
               </div>
+
+              {renderPaginationControls("bottom")}
             </section>
           </div>
         )}
