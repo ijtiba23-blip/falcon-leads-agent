@@ -161,6 +161,14 @@ export function clearLeads(campaignId?: string) {
   return { removed: initialLength - db.leads.length };
 }
 
+export function deleteLeads(ids: string[]) {
+  db = loadDb();
+  const initialLength = db.leads.length;
+  db.leads = db.leads.filter((lead) => !ids.includes(lead.id));
+  saveDb(db);
+  return { removed: initialLength - db.leads.length };
+}
+
 export function clearDemoData() {
   db = loadDb();
   const removedCampaigns = db.campaigns.length;

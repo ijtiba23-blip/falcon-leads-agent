@@ -90,6 +90,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [leads, setLeads] = useState(initialData.leads);
   const [selectedCampaignId, setSelectedCampaignId] = useState(initialData.campaigns[0]?.id ?? "");
   const [agentRun, setAgentRun] = useState<AgentRunResult | null>(null);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
 
   // Campaign Ads-Style Wizard states
   const [isRunCampaignModalOpen, setIsRunCampaignModalOpen] = useState(false);
@@ -230,6 +231,35 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       setInboxSyncError(err instanceof Error ? err.message : "SMTP/IMAP connection failed or timed out.");
     } finally {
       setIsSyncingInbox(false);
+    }
+  };
+
+  const handleDeleteLeads = async (idsToDelete: string[]) => {
+    if (idsToDelete.length === 0) return;
+    
+    const confirmMsg = idsToDelete.length === 1 
+      ? "Are you sure you want to delete this lead?" 
+      : `Are you sure you want to delete the ${idsToDelete.length} selected leads?`;
+      
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch("/api/leads", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: idsToDelete })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete leads");
+
+      // Filter local leads state
+      setLeads(prev => prev.filter(l => !idsToDelete.includes(l.id)));
+      
+      // Clear checked list
+      setSelectedLeadIds(prev => prev.filter(id => !idsToDelete.includes(id)));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "Failed to delete leads");
     }
   };
 
@@ -1206,6 +1236,10 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     () => leads.filter((lead) => lead.campaignId === selectedCampaign?.id),
     [leads, selectedCampaign?.id]
   );
+  const selectedCampaignLeadsChecked = useMemo(() => {
+    const campaignIds = campaignLeads.map(l => l.id);
+    return selectedLeadIds.filter(id => campaignIds.includes(id));
+  }, [selectedLeadIds, campaignLeads]);
   const metrics = selectedCampaign
     ? summarizeCampaign(selectedCampaign, leads)
     : { totalLeads: 0, approved: 0, review: 0, blocked: 0, averageFitScore: 0 };
@@ -3094,13 +3128,53 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                   <p className="eyebrow">Apify Extracted Data</p>
                   <h2>Discovered Leads Explorer ({campaignLeads.length} total)</h2>
                 </div>
-                <Users size={20} aria-hidden="true" />
+                <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                  {selectedCampaignLeadsChecked.length > 0 && (
+                    <button
+                      className="primary-action"
+                      style={{
+                        background: "#dc2626",
+                        color: "#fff",
+                        border: "none",
+                        fontSize: "0.8rem",
+                        padding: "0.4rem 0.8rem",
+                        minHeight: "auto",
+                        boxShadow: "0 2px 6px rgba(220, 38, 38, 0.2)",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.35rem"
+                      }}
+                      onClick={() => handleDeleteLeads(selectedCampaignLeadsChecked)}
+                    >
+                      🗑️ Delete Selected ({selectedCampaignLeadsChecked.length})
+                    </button>
+                  )}
+                  <Users size={20} aria-hidden="true" />
+                </div>
               </div>
 
               <div className="lead-table" role="table" aria-label="Extracted Leads" style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", color: "var(--ink)", fontSize: "0.85rem" }}>
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "2px solid var(--line)", paddingBottom: "0.5rem", opacity: 0.8 }}>
+                      <th style={{ padding: "0.75rem", width: "40px" }}>
+                        <input
+                          type="checkbox"
+                          checked={campaignLeads.length > 0 && campaignLeads.every(l => selectedLeadIds.includes(l.id))}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const allIds = campaignLeads.map(l => l.id);
+                              setSelectedLeadIds(prev => Array.from(new Set([...prev, ...allIds])));
+                            } else {
+                              const campaignIds = campaignLeads.map(l => l.id);
+                              setSelectedLeadIds(prev => prev.filter(id => !campaignIds.includes(id)));
+                            }
+                          }}
+                          style={{ cursor: "pointer", width: "16px", height: "16px" }}
+                        />
+                      </th>
                       <th style={{ padding: "0.75rem" }}>Lead & Segment</th>
                       <th style={{ padding: "0.75rem" }}>Contact Details</th>
                       <th style={{ padding: "0.75rem" }}>Physical Location</th>
@@ -3116,7 +3190,21 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                       const isAlreadySent = sentMessages.some(m => m.leadEmail === lead.channelIdentities?.email && m.status === 'sent');
 
                       return (
-                        <tr key={lead.id} style={{ borderBottom: "1px solid var(--line)" }}>
+                        <tr key={lead.id} style={{ borderBottom: "1px solid var(--line)", background: selectedLeadIds.includes(lead.id) ? "rgba(220, 38, 38, 0.03)" : "transparent" }}>
+                          <td style={{ padding: "0.75rem", width: "40px" }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedLeadIds.includes(lead.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedLeadIds(prev => [...prev, lead.id]);
+                                } else {
+                                  setSelectedLeadIds(prev => prev.filter(id => id !== lead.id));
+                                }
+                              }}
+                              style={{ cursor: "pointer", width: "15px", height: "15px" }}
+                            />
+                          </td>
                           <td style={{ padding: "0.75rem" }}>
                             <strong>{lead.displayName}</strong>
                             <div style={{ fontSize: "0.75rem", opacity: 0.6 }}>{lead.segment}</div>
@@ -3163,30 +3251,56 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                             )}
                           </td>
                           <td style={{ padding: "0.75rem" }}>
-                            <button
-                              className="primary-action"
-                              disabled={!hasEmail || isAlreadySent}
-                              style={{
-                                padding: "0.3rem 0.75rem",
-                                fontSize: "0.75rem",
-                                background: isAlreadySent ? "rgba(239, 68, 68, 0.12)" : hasEmail ? "#22c55e" : "rgba(255,255,255,0.06)",
-                                color: isAlreadySent ? "#ef4444" : "#fff",
-                                border: isAlreadySent ? "1px solid rgba(239, 68, 68, 0.25)" : "none",
-                                cursor: hasEmail && !isAlreadySent ? "pointer" : "not-allowed",
-                                opacity: isAlreadySent ? 0.8 : 1
-                              }}
-                              onClick={() => {
-                                if (selectedCampaign?.templateId) {
-                                  updateOutreachTemplateFields(selectedCampaign.templateId, lead.id, { leadId: lead.id });
-                                } else {
-                                  setOutreachForm((prev) => ({ ...prev, leadId: lead.id }));
-                                }
-                                setActiveTab("outreach");
-                              }}
-                              title={isAlreadySent ? "Email already successfully sent to this recipient" : hasEmail ? "Compose and send email" : "Cannot send direct email without email address"}
-                            >
-                              {isAlreadySent ? "Already Contacted" : "Dispatch Email"}
-                            </button>
+                            <div style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
+                              <button
+                                className="primary-action"
+                                disabled={!hasEmail || isAlreadySent}
+                                style={{
+                                  padding: "0.3rem 0.75rem",
+                                  fontSize: "0.75rem",
+                                  background: isAlreadySent ? "rgba(239, 68, 68, 0.12)" : hasEmail ? "#22c55e" : "rgba(255,255,255,0.06)",
+                                  color: isAlreadySent ? "#ef4444" : "#fff",
+                                  border: isAlreadySent ? "1px solid rgba(239, 68, 68, 0.25)" : "none",
+                                  cursor: hasEmail && !isAlreadySent ? "pointer" : "not-allowed",
+                                  opacity: isAlreadySent ? 0.8 : 1,
+                                  minHeight: "auto",
+                                  height: "30px"
+                                }}
+                                onClick={() => {
+                                  if (selectedCampaign?.templateId) {
+                                    updateOutreachTemplateFields(selectedCampaign.templateId, lead.id, { leadId: lead.id });
+                                  } else {
+                                    setOutreachForm((prev) => ({ ...prev, leadId: lead.id }));
+                                  }
+                                  setActiveTab("outreach");
+                                }}
+                                title={isAlreadySent ? "Email already successfully sent to this recipient" : hasEmail ? "Compose and send email" : "Cannot send direct email without email address"}
+                              >
+                                {isAlreadySent ? "Already Contacted" : "Dispatch Email"}
+                              </button>
+                              <button
+                                className="secondary-action danger"
+                                style={{
+                                  padding: "0.3rem 0.6rem",
+                                  fontSize: "0.75rem",
+                                  minHeight: "auto",
+                                  height: "30px",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  background: "rgba(239, 68, 68, 0.08)",
+                                  border: "1px solid rgba(239, 68, 68, 0.25)",
+                                  color: "#ef4444",
+                                  cursor: "pointer",
+                                  fontWeight: "bold",
+                                  borderRadius: "4px"
+                                }}
+                                onClick={() => handleDeleteLeads([lead.id])}
+                                title="Delete this lead"
+                              >
+                                🗑️ Delete
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
