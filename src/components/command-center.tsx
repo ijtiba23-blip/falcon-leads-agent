@@ -1391,57 +1391,96 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     }
   }
 
-  async function processImportedLines(lines: string[]) {
+  function cleanCellValue(val: any): string {
+    if (val === undefined || val === null) return "";
+    let str = String(val).trim();
+    // Strip XML tags like <gnm:Cell Row="89" Col="1" ValueType="60">...</gnm:Cell> or similar
+    str = str.replace(/<[^>]*>/g, "");
+    return str.trim();
+  }
+
+  async function processImportedLines(rawRows: string[][]) {
     if (!selectedCampaign) throw new Error("Select a campaign first.");
-    
+    if (rawRows.length === 0) throw new Error("No lead records found.");
+
     const parsedLeads: LeadRecord[] = [];
 
-    for (const line of lines) {
-      // Skip header line if present
-      const lowercaseLine = line.toLowerCase();
-      if (lowercaseLine.includes("email") && (lowercaseLine.includes("name") || lowercaseLine.includes("company") || lowercaseLine.includes("website"))) {
-        continue;
-      }
+    // Analyze first row for headers
+    let emailIdx = -1;
+    let nameIdx = -1;
+    let companyIdx = -1;
+    let locationIdx = -1;
 
-      // Support comma, tab, or semicolon separated columns
-      let parts: string[] = [];
-      if (line.includes("\t")) {
-        parts = line.split("\t");
-      } else if (line.includes(";")) {
-        parts = line.split(";");
-      } else {
-        parts = line.split(",");
-      }
+    const firstRow = rawRows[0] || [];
+    const hasHeaders = firstRow.some(cell => {
+      const c = cell.toLowerCase();
+      return c.includes("email") || c.includes("name") || c.includes("company") || c.includes("website") || c.includes("location");
+    });
 
-      parts = parts.map(p => p.trim());
+    let startIdx = 0;
+    if (hasHeaders) {
+      startIdx = 1; // Skip header row in parsing
+      firstRow.forEach((cell, idx) => {
+        const c = cell.toLowerCase().replace(/[^a-z0-9_]/g, ""); // Clean formatting characters
+        if (c.includes("email") || c.includes("mail")) {
+          emailIdx = idx;
+        } else if (c.includes("name") || c.includes("segment")) {
+          nameIdx = idx;
+        } else if (c.includes("company") || c.includes("brand") || c.includes("business") || c.includes("workplace")) {
+          companyIdx = idx;
+        } else if (c.includes("location") || c.includes("country") || c.includes("jurisdiction") || c.includes("address")) {
+          locationIdx = idx;
+        }
+      });
+    }
+
+    // Loop through the data rows
+    for (let i = startIdx; i < rawRows.length; i++) {
+      const row = rawRows[i];
+      if (!row || row.length === 0 || row.every(c => c === "")) continue;
 
       let displayName = "";
       let email = "";
       let companyName = "";
       let jurisdiction = selectedCampaign.jurisdictions?.[0] || "US";
 
-      if (parts.length === 1) {
-        // Just email address
-        email = parts[0];
-        displayName = email.split("@")[0] || "Manual Lead";
-        companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
-      } else if (parts.length === 2) {
-        // name, email
-        displayName = parts[0];
-        email = parts[1];
-        companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
-      } else if (parts.length === 3) {
-        // name, email, company
-        displayName = parts[0];
-        email = parts[1];
-        companyName = parts[2];
-      } else if (parts.length >= 4) {
-        // name, email, company, jurisdiction
-        displayName = parts[0];
-        email = parts[1];
-        companyName = parts[2];
-        jurisdiction = parts[3];
+      if (hasHeaders) {
+        // Retrieve values dynamically from identified indices
+        if (emailIdx !== -1 && row[emailIdx]) email = row[emailIdx];
+        if (nameIdx !== -1 && row[nameIdx]) displayName = row[nameIdx];
+        if (companyIdx !== -1 && row[companyIdx]) companyName = row[companyIdx];
+        if (locationIdx !== -1 && row[locationIdx]) jurisdiction = row[locationIdx];
+
+        // Fill in details if some columns were not matched
+        if (!displayName && email) displayName = email.split("@")[0] || "Manual Lead";
+        if (!companyName && email) companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+      } else {
+        // Fallback to original index-based mapping
+        if (row.length === 1) {
+          email = row[0];
+          displayName = email.split("@")[0] || "Manual Lead";
+          companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+        } else if (row.length === 2) {
+          displayName = row[0];
+          email = row[1];
+          companyName = email.split("@")[1]?.split(".")[0] || "Manual Import";
+        } else if (row.length === 3) {
+          displayName = row[0];
+          email = row[1];
+          companyName = row[2];
+        } else if (row.length >= 4) {
+          displayName = row[0];
+          email = row[1];
+          companyName = row[2];
+          jurisdiction = row[3];
+        }
       }
+
+      // Clean final values
+      email = email.trim();
+      displayName = displayName.trim();
+      companyName = companyName.trim();
+      jurisdiction = jurisdiction.trim() || selectedCampaign.jurisdictions?.[0] || "US";
 
       // Quick basic email validation regex
       if (!email || !email.includes("@")) {
@@ -1515,7 +1554,19 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
 
     try {
       const lines = manualPasteText.split("\n").map(l => l.trim()).filter(Boolean);
-      await processImportedLines(lines);
+      const rawRows: string[][] = lines.map(line => {
+        let parts: string[] = [];
+        if (line.includes("\t")) {
+          parts = line.split("\t");
+        } else if (line.includes(";")) {
+          parts = line.split(";");
+        } else {
+          parts = line.split(",");
+        }
+        return parts.map(p => p.trim());
+      });
+
+      await processImportedLines(rawRows);
       setManualPasteText("");
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : "Failed to import leads manually");
@@ -1551,18 +1602,15 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
             
             if (rows.length === 0) throw new Error("No rows found in Excel sheet.");
             
-            const lines: string[] = [];
+            const rawRows: string[][] = [];
             for (const row of rows) {
               if (Array.isArray(row) && row.length > 0) {
-                const filteredRow = row.map(cell => cell !== undefined && cell !== null ? String(cell).trim() : "");
-                if (filteredRow.some(cell => cell !== "")) {
-                  lines.push(filteredRow.join(","));
-                }
+                rawRows.push(row.map(cell => cleanCellValue(cell)));
               }
             }
             
-            if (lines.length === 0) throw new Error("No valid records found in Excel sheet.");
-            await processImportedLines(lines);
+            if (rawRows.length === 0) throw new Error("No valid records found in Excel sheet.");
+            await processImportedLines(rawRows);
           } catch (err) {
             setImportMessage(err instanceof Error ? err.message : "Failed to parse Excel file");
           } finally {
@@ -1584,7 +1632,32 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
             if (!text.trim()) throw new Error("File is empty.");
             
             const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-            await processImportedLines(lines);
+            const rawRows: string[][] = lines.map(line => {
+              const parts: string[] = [];
+              let current = "";
+              let inQuotes = false;
+              for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                  inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                  parts.push(current.trim());
+                  current = "";
+                } else if (char === ';' && !inQuotes && line.includes(";")) {
+                  parts.push(current.trim());
+                  current = "";
+                } else if (char === '\t' && !inQuotes && line.includes("\t")) {
+                  parts.push(current.trim());
+                  current = "";
+                } else {
+                  current += char;
+                }
+              }
+              parts.push(current.trim());
+              return parts.map(p => cleanCellValue(p).replace(/^"|"$/g, "").trim());
+            });
+
+            await processImportedLines(rawRows);
           } catch (err) {
             setImportMessage(err instanceof Error ? err.message : "Failed to parse CSV/TXT file");
           } finally {
