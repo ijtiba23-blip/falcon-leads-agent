@@ -93,6 +93,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
   const [leadsCurrentPage, setLeadsCurrentPage] = useState(1);
   const [leadsPageSize, setLeadsPageSize] = useState(20);
+  const [logsCurrentPage, setLogsCurrentPage] = useState(1);
+  const [logsPageSize, setLogsPageSize] = useState(20);
 
   // Reset pagination page when switching campaigns
   useEffect(() => {
@@ -1253,6 +1255,12 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     const end = start + leadsPageSize;
     return campaignLeads.slice(start, end);
   }, [campaignLeads, leadsCurrentPage, leadsPageSize]);
+  const totalPagesLogs = Math.ceil(sentMessages.length / logsPageSize);
+  const paginatedLogs = useMemo(() => {
+    const start = (logsCurrentPage - 1) * logsPageSize;
+    const end = start + logsPageSize;
+    return sentMessages.slice(start, end);
+  }, [sentMessages, logsCurrentPage, logsPageSize]);
   const metrics = selectedCampaign
     ? summarizeCampaign(selectedCampaign, leads)
     : { totalLeads: 0, approved: 0, review: 0, blocked: 0, averageFitScore: 0 };
@@ -2103,12 +2111,19 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   }
 
 
-  function renderPaginationControls(position: "top" | "bottom") {
-    if (campaignLeads.length === 0) return null;
+  function renderPaginationControls(type: "leads" | "logs", position: "top" | "bottom") {
+    const currentList = type === "leads" ? campaignLeads : sentMessages;
+    const currentPage = type === "leads" ? leadsCurrentPage : logsCurrentPage;
+    const pageSize = type === "leads" ? leadsPageSize : logsPageSize;
+    const setCurrentPage = type === "leads" ? setLeadsCurrentPage : setLogsCurrentPage;
+    const setPageSize = type === "leads" ? setLeadsPageSize : setLogsPageSize;
+    const totalPagesCount = type === "leads" ? totalPages : totalPagesLogs;
+
+    if (currentList.length === 0) return null;
 
     return (
       <div
-        className={`pagination-controls pagination-${position}`}
+        className={`pagination-controls pagination-${type}-${position}`}
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -2126,24 +2141,24 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       >
         {/* Left: Range Info */}
         <div style={{ opacity: 0.8 }}>
-          Showing <strong style={{ color: "#9b7b3a" }}>{Math.min(campaignLeads.length, (leadsCurrentPage - 1) * leadsPageSize + 1)}</strong> to{" "}
-          <strong style={{ color: "#9b7b3a" }}>{Math.min(campaignLeads.length, leadsCurrentPage * leadsPageSize)}</strong> of{" "}
-          <strong style={{ color: "#9b7b3a" }}>{campaignLeads.length}</strong> discovered leads
+          Showing <strong style={{ color: "#9b7b3a" }}>{Math.min(currentList.length, (currentPage - 1) * pageSize + 1)}</strong> to{" "}
+          <strong style={{ color: "#9b7b3a" }}>{Math.min(currentList.length, currentPage * pageSize)}</strong> of{" "}
+          <strong style={{ color: "#9b7b3a" }}>{currentList.length}</strong> {type === "leads" ? "discovered leads" : "outreach records"}
         </div>
 
         {/* Center: Page Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
           <button
-            onClick={() => setLeadsCurrentPage(prev => Math.max(1, prev - 1))}
-            disabled={leadsCurrentPage === 1}
+            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            disabled={currentPage === 1}
             style={{
               padding: "0.35rem 0.75rem",
               border: "1px solid var(--line)",
               background: "rgba(255,255,255,0.03)",
               color: "var(--ink)",
               borderRadius: "4px",
-              cursor: leadsCurrentPage === 1 ? "not-allowed" : "pointer",
-              opacity: leadsCurrentPage === 1 ? 0.4 : 1,
+              cursor: currentPage === 1 ? "not-allowed" : "pointer",
+              opacity: currentPage === 1 ? 0.4 : 1,
               fontSize: "0.8rem",
               fontWeight: "bold",
               transition: "all 0.2s"
@@ -2156,8 +2171,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
           {(() => {
             const pages = [];
             const maxVisible = 5;
-            let startPage = Math.max(1, leadsCurrentPage - Math.floor(maxVisible / 2));
-            let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+            let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+            let endPage = Math.min(totalPagesCount, startPage + maxVisible - 1);
 
             if (endPage - startPage + 1 < maxVisible) {
               startPage = Math.max(1, endPage - maxVisible + 1);
@@ -2168,7 +2183,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
               pages.push(
                 <button
                   key={1}
-                  onClick={() => setLeadsCurrentPage(1)}
+                  onClick={() => setCurrentPage(1)}
                   style={{
                     padding: "0.35rem 0.7rem",
                     border: "1px solid var(--line)",
@@ -2188,11 +2203,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
             }
 
             for (let i = startPage; i <= endPage; i++) {
-              const isActive = i === leadsCurrentPage;
+              const isActive = i === currentPage;
               pages.push(
                 <button
                   key={i}
-                  onClick={() => setLeadsCurrentPage(i)}
+                  onClick={() => setCurrentPage(i)}
                   style={{
                     padding: "0.35rem 0.7rem",
                     border: isActive ? "1px solid #9b7b3a" : "1px solid var(--line)",
@@ -2209,15 +2224,15 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
               );
             }
 
-            // Always show last page + ellipsis if ending page < totalPages - 1
-            if (endPage < totalPages) {
-              if (endPage < totalPages - 1) {
+            // Always show last page + ellipsis if ending page < totalPagesCount - 1
+            if (endPage < totalPagesCount) {
+              if (endPage < totalPagesCount - 1) {
                 pages.push(<span key="ellipsis-end" style={{ padding: "0 0.25rem", opacity: 0.5 }}>...</span>);
               }
               pages.push(
                 <button
-                  key={totalPages}
-                  onClick={() => setLeadsCurrentPage(totalPages)}
+                  key={totalPagesCount}
+                  onClick={() => setCurrentPage(totalPagesCount)}
                   style={{
                     padding: "0.35rem 0.7rem",
                     border: "1px solid var(--line)",
@@ -2228,7 +2243,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                     fontSize: "0.8rem"
                   }}
                 >
-                  {totalPages}
+                  {totalPagesCount}
                 </button>
               );
             }
@@ -2237,16 +2252,16 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
           })()}
 
           <button
-            onClick={() => setLeadsCurrentPage(prev => Math.min(totalPages, prev + 1))}
-            disabled={leadsCurrentPage === totalPages}
+            onClick={() => setCurrentPage(prev => Math.min(totalPagesCount, prev + 1))}
+            disabled={currentPage === totalPagesCount}
             style={{
               padding: "0.35rem 0.75rem",
               border: "1px solid var(--line)",
               background: "rgba(255,255,255,0.03)",
               color: "var(--ink)",
               borderRadius: "4px",
-              cursor: leadsCurrentPage === totalPages ? "not-allowed" : "pointer",
-              opacity: leadsCurrentPage === totalPages ? 0.4 : 1,
+              cursor: currentPage === totalPagesCount ? "not-allowed" : "pointer",
+              opacity: currentPage === totalPagesCount ? 0.4 : 1,
               fontSize: "0.8rem",
               fontWeight: "bold",
               transition: "all 0.2s"
@@ -2260,10 +2275,10 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <span style={{ opacity: 0.8 }}>Rows per page:</span>
           <select
-            value={leadsPageSize}
+            value={pageSize}
             onChange={(e) => {
-              setLeadsPageSize(Number(e.target.value));
-              setLeadsCurrentPage(1);
+              setPageSize(Number(e.target.value));
+              setCurrentPage(1);
             }}
             style={{
               padding: "0.35rem 0.5rem",
@@ -3352,10 +3367,10 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                 </div>
               </div>
 
-              {renderPaginationControls("top")}
+              {renderPaginationControls("leads", "top")}
 
               <div className="lead-table" role="table" aria-label="Extracted Leads" style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", color: "var(--ink)", fontSize: "0.85rem" }}>
+                <table style={{ tableLayout: "fixed", width: "100%", borderCollapse: "collapse", color: "var(--ink)", fontSize: "0.85rem" }}>
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "2px solid var(--line)", paddingBottom: "0.5rem", opacity: 0.8 }}>
                       <th style={{ padding: "0.75rem", width: "40px" }}>
@@ -3374,13 +3389,13 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           style={{ cursor: "pointer", width: "16px", height: "16px" }}
                         />
                       </th>
-                      <th style={{ padding: "0.75rem" }}>Lead & Segment</th>
-                      <th style={{ padding: "0.75rem" }}>Contact Details</th>
-                      <th style={{ padding: "0.75rem" }}>Physical Location</th>
-                      <th style={{ padding: "0.75rem" }}>Source</th>
-                      <th style={{ padding: "0.75rem" }}>Scores & Lane</th>
-                      <th style={{ padding: "0.75rem" }}>Sent Status</th>
-                      <th style={{ padding: "0.75rem" }}>Direct Action</th>
+                      <th style={{ padding: "0.75rem", width: "22%" }}>Lead & Segment</th>
+                      <th style={{ padding: "0.75rem", width: "25%" }}>Contact Details</th>
+                      <th style={{ padding: "0.75rem", width: "15%" }}>Physical Location</th>
+                      <th style={{ padding: "0.75rem", width: "10%" }}>Source</th>
+                      <th style={{ padding: "0.75rem", width: "10%" }}>Scores & Lane</th>
+                      <th style={{ padding: "0.75rem", width: "8%" }}>Sent Status</th>
+                      <th style={{ padding: "0.75rem", width: "10%" }}>Direct Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3404,33 +3419,33 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                               style={{ cursor: "pointer", width: "15px", height: "15px" }}
                             />
                           </td>
-                          <td style={{ padding: "0.75rem" }}>
-                            <strong>{lead.displayName}</strong>
-                            <div style={{ fontSize: "0.75rem", opacity: 0.6 }}>{lead.segment}</div>
+                          <td style={{ padding: "0.75rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                            <strong style={{ display: "block", wordBreak: "break-word", overflowWrap: "anywhere" }}>{lead.displayName}</strong>
+                            <div style={{ fontSize: "0.75rem", opacity: 0.6, wordBreak: "break-word", overflowWrap: "anywhere" }}>{lead.segment}</div>
                             {lead.companyName && (
-                              <div style={{ fontSize: "0.7rem", opacity: 0.5 }}>🏢 {lead.companyName}</div>
+                              <div style={{ fontSize: "0.7rem", opacity: 0.5, wordBreak: "break-word", overflowWrap: "anywhere" }}>🏢 {lead.companyName}</div>
                             )}
                           </td>
-                          <td style={{ padding: "0.75rem" }}>
-                            <div>📧 {hasEmail ? lead.channelIdentities.email : <span style={{ opacity: 0.5, fontStyle: "italic" }}>No direct email</span>}</div>
+                          <td style={{ padding: "0.75rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                            <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>📧 {hasEmail ? lead.channelIdentities.email : <span style={{ opacity: 0.5, fontStyle: "italic" }}>No direct email</span>}</div>
                             {lead.phone && <div style={{ fontSize: "0.75rem", opacity: 0.7 }}>📞 {lead.phone}</div>}
                             {lead.website && (
-                              <div style={{ fontSize: "0.75rem" }}>
-                                🔗 <a href={lead.website.startsWith("http") ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" style={{ color: "#22c55e", textDecoration: "underline" }}>
+                              <div style={{ fontSize: "0.75rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                🔗 <a href={lead.website.startsWith("http") ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer" style={{ color: "#22c55e", textDecoration: "underline", wordBreak: "break-word", overflowWrap: "anywhere" }}>
                                   {lead.website.replace("https://", "").replace("http://", "").split("/")[0]}
                                 </a>
                               </div>
                             )}
                           </td>
-                          <td style={{ padding: "0.75rem", opacity: 0.8 }}>
+                          <td style={{ padding: "0.75rem", opacity: 0.8, wordBreak: "break-word", overflowWrap: "anywhere" }}>
                             {lead.address ? lead.address : <span style={{ opacity: 0.4 }}>-</span>}
                             <div style={{ fontSize: "0.7rem", opacity: 0.5 }}>Region: {lead.jurisdiction}</div>
                           </td>
-                          <td style={{ padding: "0.75rem" }}>
+                          <td style={{ padding: "0.75rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>
                             <span style={{ fontSize: "0.75rem", opacity: 0.7, textTransform: "capitalize" }}>{lead.sourceType.replaceAll("_", " ")}</span>
                             {lead.sourceUrl && (
-                              <div style={{ fontSize: "0.7rem" }}>
-                                <a href={lead.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#60a5fa", textDecoration: "underline" }}>
+                              <div style={{ fontSize: "0.7rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                                <a href={lead.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#60a5fa", textDecoration: "underline", wordBreak: "break-word", overflowWrap: "anywhere" }}>
                                   View platform listing
                                 </a>
                               </div>
@@ -3514,7 +3529,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                 )}
               </div>
 
-              {renderPaginationControls("bottom")}
+              {renderPaginationControls("leads", "bottom")}
             </section>
           </div>
         )}
@@ -4284,25 +4299,27 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                 <Play size={20} style={{ color: "#10b981" }} />
               </div>
 
+              {renderPaginationControls("logs", "top")}
+
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", color: "var(--ink)" }}>
+                <table style={{ tableLayout: "fixed", width: "100%", borderCollapse: "collapse", color: "var(--ink)" }}>
                   <thead>
                     <tr style={{ borderBottom: "2px solid rgba(255,255,255,0.08)", textAlign: "left" }}>
-                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7 }}>Recipient</th>
-                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7 }}>Subject</th>
-                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7 }}>Dispatched At</th>
-                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7 }}>Status</th>
-                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7 }}>Actions</th>
+                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7, width: "30%" }}>Recipient</th>
+                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7, width: "35%" }}>Subject</th>
+                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7, width: "15%" }}>Dispatched At</th>
+                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7, width: "10%" }}>Status</th>
+                      <th style={{ padding: "0.75rem", fontSize: "0.8rem", textTransform: "uppercase", opacity: 0.7, width: "10%" }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sentMessages.map((sent) => (
+                    {paginatedLogs.map((sent) => (
                       <tr key={sent.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                        <td style={{ padding: "0.75rem" }}>
-                          <strong>{sent.leadName}</strong>
-                          <div style={{ fontSize: "0.75rem", opacity: 0.6 }}>{sent.leadEmail}</div>
+                        <td style={{ padding: "0.75rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                          <strong style={{ display: "block", wordBreak: "break-word", overflowWrap: "anywhere" }}>{sent.leadName}</strong>
+                          <div style={{ fontSize: "0.75rem", opacity: 0.6, wordBreak: "break-word", overflowWrap: "anywhere" }}>{sent.leadEmail}</div>
                         </td>
-                        <td style={{ padding: "0.75rem", fontSize: "0.85rem" }}>{sent.subject}</td>
+                        <td style={{ padding: "0.75rem", fontSize: "0.85rem", wordBreak: "break-word", overflowWrap: "anywhere" }}>{sent.subject}</td>
                         <td style={{ padding: "0.75rem", fontSize: "0.8rem", opacity: 0.7 }}>
                           {new Date(sent.sentAt).toLocaleString()}
                         </td>
@@ -4341,6 +4358,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                   </tbody>
                 </table>
               </div>
+
+              {renderPaginationControls("logs", "bottom")}
             </article>
           </div>
         )}
