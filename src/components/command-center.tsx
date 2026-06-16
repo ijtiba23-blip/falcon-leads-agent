@@ -95,6 +95,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   const [leadsPageSize, setLeadsPageSize] = useState(20);
   const [logsCurrentPage, setLogsCurrentPage] = useState(1);
   const [logsPageSize, setLogsPageSize] = useState(20);
+  const [inboxCurrentPage, setInboxCurrentPage] = useState(1);
+  const [inboxPageSize, setInboxPageSize] = useState(10);
 
   // Reset pagination page when switching campaigns
   useEffect(() => {
@@ -240,6 +242,13 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
       setInboxSyncError(err instanceof Error ? err.message : "SMTP/IMAP connection failed or timed out.");
     } finally {
       setIsSyncingInbox(false);
+    }
+  };
+
+  const markAllAsRead = () => {
+    setMockInbox(prev => prev.map(item => ({ ...item, status: "read" })));
+    if (selectedInboxEmail && selectedInboxEmail.status === "unread") {
+      setSelectedInboxEmail((prev: any) => prev ? { ...prev, status: "read" } : null);
     }
   };
 
@@ -1261,6 +1270,12 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
     const end = start + logsPageSize;
     return sentMessages.slice(start, end);
   }, [sentMessages, logsCurrentPage, logsPageSize]);
+  const totalPagesInbox = Math.ceil(mockInbox.length / inboxPageSize);
+  const paginatedInbox = useMemo(() => {
+    const start = (inboxCurrentPage - 1) * inboxPageSize;
+    const end = start + inboxPageSize;
+    return mockInbox.slice(start, end);
+  }, [mockInbox, inboxCurrentPage, inboxPageSize]);
   const metrics = selectedCampaign
     ? summarizeCampaign(selectedCampaign, leads)
     : { totalLeads: 0, approved: 0, review: 0, blocked: 0, averageFitScore: 0 };
@@ -2184,15 +2199,129 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
   }
 
 
-  function renderPaginationControls(type: "leads" | "logs", position: "top" | "bottom") {
-    const currentList = type === "leads" ? campaignLeads : sentMessages;
-    const currentPage = type === "leads" ? leadsCurrentPage : logsCurrentPage;
-    const pageSize = type === "leads" ? leadsPageSize : logsPageSize;
-    const setCurrentPage = type === "leads" ? setLeadsCurrentPage : setLogsCurrentPage;
-    const setPageSize = type === "leads" ? setLeadsPageSize : setLogsPageSize;
-    const totalPagesCount = type === "leads" ? totalPages : totalPagesLogs;
+  function renderPaginationControls(type: "leads" | "logs" | "inbox", position: "top" | "bottom") {
+    const currentList = 
+      type === "leads" ? campaignLeads : 
+      type === "logs" ? sentMessages : 
+      mockInbox;
+
+    const currentPage = 
+      type === "leads" ? leadsCurrentPage : 
+      type === "logs" ? logsCurrentPage : 
+      inboxCurrentPage;
+
+    const pageSize = 
+      type === "leads" ? leadsPageSize : 
+      type === "logs" ? logsPageSize : 
+      inboxPageSize;
+
+    const setCurrentPage = 
+      type === "leads" ? setLeadsCurrentPage : 
+      type === "logs" ? setLogsCurrentPage : 
+      setInboxCurrentPage;
+
+    const setPageSize = 
+      type === "leads" ? setLeadsPageSize : 
+      type === "logs" ? setLogsPageSize : 
+      setInboxPageSize;
+
+    const totalPagesCount = 
+      type === "leads" ? totalPages : 
+      type === "logs" ? totalPagesLogs : 
+      totalPagesInbox;
 
     if (currentList.length === 0) return null;
+
+    if (type === "inbox") {
+      return (
+        <div
+          className={`pagination-controls pagination-inbox-${position}`}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: position === "bottom" ? "0.75rem" : "0",
+            marginBottom: position === "top" ? "0.75rem" : "0",
+            paddingTop: position === "bottom" ? "0.75rem" : "0",
+            paddingBottom: position === "top" ? "0.75rem" : "0",
+            borderTop: position === "bottom" ? "1px solid var(--line)" : "none",
+            borderBottom: position === "top" ? "1px solid var(--line)" : "none",
+            fontSize: "0.8rem",
+            width: "100%",
+            gap: "0.5rem"
+          }}
+        >
+          {/* Left: Range Info (compact) */}
+          <div style={{ opacity: 0.8, fontSize: "0.75rem" }}>
+            <strong>{Math.min(currentList.length, (currentPage - 1) * pageSize + 1)}</strong>-
+            <strong>{Math.min(currentList.length, currentPage * pageSize)}</strong> of{" "}
+            <strong>{currentList.length}</strong>
+          </div>
+
+          {/* Center: Prev/Next & Page indicator */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              style={{
+                padding: "0.2rem 0.4rem",
+                border: "1px solid var(--line)",
+                background: "rgba(255,255,255,0.03)",
+                color: "var(--ink)",
+                borderRadius: "4px",
+                cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                opacity: currentPage === 1 ? 0.4 : 1,
+                fontSize: "0.75rem"
+              }}
+            >
+              ◀
+            </button>
+            <span style={{ fontSize: "0.75rem", padding: "0 0.25rem", whiteSpace: "nowrap" }}>
+              {currentPage} / {totalPagesCount || 1}
+            </span>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPagesCount, prev + 1))}
+              disabled={currentPage === totalPagesCount}
+              style={{
+                padding: "0.2rem 0.4rem",
+                border: "1px solid var(--line)",
+                background: "rgba(255,255,255,0.03)",
+                color: "var(--ink)",
+                borderRadius: "4px",
+                cursor: currentPage === totalPagesCount ? "not-allowed" : "pointer",
+                opacity: currentPage === totalPagesCount ? 0.4 : 1,
+                fontSize: "0.75rem"
+              }}
+            >
+              ▶
+            </button>
+          </div>
+
+          {/* Right: compact Page size */}
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            style={{
+              padding: "0.2rem 0.3rem",
+              border: "1px solid var(--line)",
+              background: "var(--card-bg, rgba(255,255,255,0.05))",
+              color: "var(--ink)",
+              borderRadius: "4px",
+              cursor: "pointer",
+              outline: "none",
+              fontSize: "0.75rem"
+            }}
+          >
+            <option value="5" style={{ background: "#1a1a1a", color: "#fff" }}>5/p</option>
+            <option value="10" style={{ background: "#1a1a1a", color: "#fff" }}>10/p</option>
+            <option value="20" style={{ background: "#1a1a1a", color: "#fff" }}>20/p</option>
+          </select>
+        </div>
+      );
+    }
 
     return (
       <div
@@ -4443,14 +4572,34 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
             <section style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: "1.5rem" }}>
               {/* Inbox Sidebar List */}
               <article className="panel" style={{ padding: "1rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid rgba(0,0,0,0.08)", paddingBottom: "0.5rem", flexWrap: "wrap", gap: "0.5rem" }}>
-                  <h3 style={{ margin: 0, fontSize: "1rem" }}>Responses ({mockInbox.length})</h3>
-                  <div style={{ display: "flex", gap: "0.35rem" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem", borderBottom: "1px solid rgba(0,0,0,0.08)", paddingBottom: "0.5rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: "bold" }}>Responses ({mockInbox.length})</h3>
+                    <button 
+                      onClick={markAllAsRead}
+                      disabled={!mockInbox.some(m => m.status === "unread")}
+                      style={{
+                        padding: "0.2rem 0.5rem",
+                        background: mockInbox.some(m => m.status === "unread") ? "rgba(155, 123, 58, 0.08)" : "rgba(0,0,0,0.02)",
+                        border: mockInbox.some(m => m.status === "unread") ? "1px solid rgba(155, 123, 58, 0.25)" : "1px solid rgba(0,0,0,0.06)",
+                        color: mockInbox.some(m => m.status === "unread") ? "#9b7b3a" : "#9ca3af",
+                        fontSize: "0.7rem",
+                        borderRadius: "4px",
+                        cursor: mockInbox.some(m => m.status === "unread") ? "pointer" : "not-allowed",
+                        fontWeight: "bold",
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      ✓ Mark all read
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.35rem", width: "100%" }}>
                     <button 
                       onClick={() => syncRealInbox()}
                       disabled={isSyncingInbox}
                       style={{
-                        padding: "0.2rem 0.5rem",
+                        flex: 1,
+                        padding: "0.3rem 0.5rem",
                         background: "rgba(155, 123, 58, 0.1)",
                         border: "1px solid rgba(155, 123, 58, 0.35)",
                         color: "#9b7b3a",
@@ -4458,6 +4607,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                         borderRadius: "4px",
                         cursor: "pointer",
                         fontWeight: "bold",
+                        textAlign: "center",
                         transition: "all 0.2s"
                       }}
                     >
@@ -4480,7 +4630,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                         console.log("Simulated and selected test email:", newTestEmail);
                       }}
                       style={{
-                        padding: "0.2rem 0.5rem",
+                        flex: 1,
+                        padding: "0.3rem 0.5rem",
                         background: "rgba(16, 185, 129, 0.1)",
                         border: "1px solid rgba(16, 185, 129, 0.35)",
                         color: "#10b981",
@@ -4488,6 +4639,7 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                         borderRadius: "4px",
                         cursor: "pointer",
                         fontWeight: "bold",
+                        textAlign: "center",
                         transition: "all 0.2s"
                       }}
                     >
@@ -4500,8 +4652,11 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                     </div>
                   )}
                 </div>
+
+                {renderPaginationControls("inbox", "top")}
+
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                  {mockInbox.map(inboxMail => {
+                  {paginatedInbox.map(inboxMail => {
                     const isSelected = selectedInboxEmail?.id === inboxMail.id;
                     return (
                       <div 
@@ -4511,6 +4666,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                           setSelectedInboxEmail(inboxMail);
                           setInboxReplyStatus(null);
                           setInboxReply("");
+                          // Mark as read when selected
+                          setMockInbox(prev => prev.map(m => m.id === inboxMail.id ? { ...m, status: "read" } : m));
                         }}
                         style={{
                           padding: "0.75rem",
@@ -4538,6 +4695,8 @@ export function CommandCenter({ initialData }: CommandCenterProps) {
                     );
                   })}
                 </div>
+
+                {renderPaginationControls("inbox", "bottom")}
               </article>
 
               {/* Email Content Detail View */}
